@@ -233,20 +233,17 @@ func (c *Client) syncModels() {
 		return
 	}
 
-	cleared := false
 	newModels, err := c.fetchModels(true)
 	if err != nil {
 		if c.modelsEqual(nil) {
 			return
 		}
 		log.Printf("Reporting empty model list due to upstream failure")
-		newModels = nil
-		cleared = true
 	} else if c.modelsEqual(newModels) {
 		return
 	}
 
-	if cleared {
+	if len(newModels) == 0 {
 		log.Printf("Cleared model list due to upstream failure")
 	} else {
 		log.Printf("Detected model changes, triggering update")
