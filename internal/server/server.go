@@ -870,8 +870,7 @@ func cloneModelInfos(src []*types.ModelInfo) []*types.ModelInfo {
 			out = append(out, nil)
 			continue
 		}
-		copy := cloneModelInfo(model)
-		out = append(out, copy)
+		out = append(out, cloneModelInfo(model))
 	}
 	return out
 }
@@ -880,8 +879,11 @@ func cloneModelInfo(src *types.ModelInfo) *types.ModelInfo {
 	if src == nil {
 		return nil
 	}
-	copy := *src
-	return &copy
+	cloned, ok := proto.Clone(src).(*types.ModelInfo)
+	if !ok {
+		return nil
+	}
+	return cloned
 }
 
 func cloneForwardResponse(src *types.ForwardResponse) *types.ForwardResponse {

@@ -1,15 +1,18 @@
 package client
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"mime"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -18,8 +21,6 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
-
-	"bufio"
 
 	"github.com/gorilla/websocket"
 	"github.com/zeyugao/synapse/internal/types"
@@ -84,7 +85,7 @@ func (c *Client) fetchModels(silent bool) ([]*types.ModelInfo, error) {
 		if !silent {
 			log.Printf("Failed to create model request: %v", err)
 		}
-		return cloneModelInfos(c.models), err
+		return nil, err
 	}
 
 	if c.ApiKey != "" {
@@ -96,7 +97,7 @@ func (c *Client) fetchModels(silent bool) ([]*types.ModelInfo, error) {
 		if !silent {
 			log.Printf("Failed to get model list: %v", err)
 		}
-		return cloneModelInfos(c.models), err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
@@ -105,7 +106,7 @@ func (c *Client) fetchModels(silent bool) ([]*types.ModelInfo, error) {
 		if !silent {
 			log.Printf("Failed to parse model response: %v", err)
 		}
-		return cloneModelInfos(c.models), err
+		return nil, err
 	}
 
 	cloned := cloneModelInfos(modelsResp.GetData())
@@ -223,23 +224,46 @@ func (c *Client) modelSyncLoop() {
 			continue
 		}
 
-		newModels, err := c.fetchModels(true)
-		if err != nil && len(newModels) == 0 {
-			continue
+		c.syncModels()
+	}
+}
+
+func (c *Client) syncModels() {
+	if c.closing || c.isReconnecting() || c.conn == nil {
+		return
+	}
+
+	cleared := false
+	newModels, err := c.fetchModels(true)
+	if err != nil {
+		if c.modelsEqual(nil) {
+			return
 		}
-		if !c.modelsEqual(newModels) {
-			log.Printf("Detected model changes, triggering update")
-			log.Printf("Updated model list (%d models):", len(newModels))
-			for _, model := range newModels {
-				if model == nil {
-					continue
-				}
-				log.Printf("- %s", model.GetId())
+		log.Printf("Reporting empty model list due to upstream failure")
+		newModels = nil
+		cleared = true
+	} else if c.modelsEqual(newModels) {
+		return
+	}
+
+	if cleared {
+		log.Printf("Cleared model list due to upstream failure")
+	} else {
+		log.Printf("Detected model changes, triggering update")
+		log.Printf("Updated model list (%d models):", len(newModels))
+		for _, model := range newModels {
+			if model == nil {
+				continue
 			}
-			c.models = newModels
-			c.notifyModelUpdate(newModels)
+			log.Printf("- %s", model.GetId())
 		}
 	}
+	c.models = newModels
+	c.notifyModelUpdate(newModels)
+}
+
+func (c *Client) triggerModelSync() {
+	go c.syncModels()
 }
 
 func (c *Client) handleRequests() {
@@ -388,6 +412,9 @@ func (c *Client) forwardRequest(req *types.ForwardRequest) {
 	resp, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
 		log.Printf("Upstream request execution failed: %v", err)
+		if isConnectionRefused(err) {
+			c.triggerModelSync()
+		}
 		errResp := &types.ForwardResponse{
 			RequestId:  req.GetRequestId(),
 			StatusCode: int32(http.StatusInternalServerError),
@@ -683,6 +710,22 @@ func (c *Client) sendForwardResponse(resp *types.ForwardResponse) error {
 	return err
 }
 
+func isConnectionRefused(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return true
+	}
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		if errors.Is(opErr.Err, syscall.ECONNREFUSED) {
+			return true
+		}
+	}
+	return strings.Contains(err.Error(), "connection refused")
+}
+
 func cloneModelInfos(src []*types.ModelInfo) []*types.ModelInfo {
 	if len(src) == 0 {
 		return nil
@@ -693,8 +736,11 @@ func cloneModelInfos(src []*types.ModelInfo) []*types.ModelInfo {
 			out = append(out, nil)
 			continue
 		}
-		copy := *model
-		out = append(out, &copy)
+		cloned, ok := proto.Clone(model).(*types.ModelInfo)
+		if !ok {
+			continue
+		}
+		out = append(out, cloned)
 	}
 	return out
 }
