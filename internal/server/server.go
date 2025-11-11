@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"math/rand"
 	"net/http"
 	"os"
@@ -23,7 +24,10 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const responseChannelBuffer = 8
+const (
+	responseChannelBuffer = 8
+	defaultProcessingMs   = 1000
+)
 
 type Server struct {
 	clients                      map[string]*Client
@@ -52,6 +56,7 @@ type Client struct {
 	models         []*types.ModelInfo
 	mu             sync.Mutex
 	activeRequests int64
+	avgProcessBits uint64
 }
 
 func (c *Client) writeProto(msg proto.Message) error {
@@ -81,6 +86,17 @@ func (c *Client) decrementActive() {
 
 func (c *Client) loadActive() int64 {
 	return atomic.LoadInt64(&c.activeRequests)
+}
+
+func (c *Client) updateAverageProcessing(ms float64) {
+	if ms < 0 {
+		ms = 0
+	}
+	atomic.StoreUint64(&c.avgProcessBits, math.Float64bits(ms))
+}
+
+func (c *Client) averageProcessing() float64 {
+	return math.Float64frombits(atomic.LoadUint64(&c.avgProcessBits))
 }
 
 func NewServer(apiAuthKey, wsAuthKey string, version string, semver string, clientBinaryPath string, abortOnClientVersionMismatch bool) *Server {
@@ -312,6 +328,9 @@ func (s *Server) handleClientResponses(clientID string, client *Client) {
 				s.handleForwardResponse(cloneForwardResponse(payload.ForwardResponse))
 			}
 		case *pb.ClientMessage_Heartbeat:
+			if payload.Heartbeat != nil {
+				client.updateAverageProcessing(payload.Heartbeat.GetAverageProcessingMs())
+			}
 			if err := client.writeRaw(s.pongFrame); err != nil {
 				log.Printf("Failed to send pong response: %v", err)
 			}
@@ -465,32 +484,25 @@ func (s *Server) handleAPIRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var bestClient *Client
-	var bestClientID string
-	minLoad := -1
-	var tiedClients []*Client
-	var tiedClientIDs []string
+	var tiedIndexes []int
+	minLoad := int64(-1)
 
 	for i, currentClient := range candidateClients {
-		currentClientID := candidateClientIDs[i]
-		load := int(currentClient.loadActive())
+		load := currentClient.loadActive()
 
-		if bestClient == nil || load < minLoad {
+		if minLoad == -1 || load < minLoad {
 			minLoad = load
-			bestClient = currentClient
-			bestClientID = currentClientID
-			tiedClients = []*Client{currentClient}
-			tiedClientIDs = []string{currentClientID}
+			tiedIndexes = tiedIndexes[:0]
+			tiedIndexes = append(tiedIndexes, i)
 		} else if load == minLoad {
-			tiedClients = append(tiedClients, currentClient)
-			tiedClientIDs = append(tiedClientIDs, currentClientID)
+			tiedIndexes = append(tiedIndexes, i)
 		}
 	}
 
-	if len(tiedClients) > 1 {
-		randomIndex := rand.Intn(len(tiedClients))
-		bestClient = tiedClients[randomIndex]
-		bestClientID = tiedClientIDs[randomIndex]
+	bestClient, bestClientID := selectClientByMetrics(candidateClients, candidateClientIDs, tiedIndexes)
+	if bestClient == nil {
+		http.Error(w, "No available clients", http.StatusServiceUnavailable)
+		return
 	}
 
 	client := bestClient     // Use this client object to send the request
@@ -884,6 +896,49 @@ func cloneModelInfo(src *types.ModelInfo) *types.ModelInfo {
 		return nil
 	}
 	return cloned
+}
+
+func selectClientByMetrics(clients []*Client, ids []string, indexes []int) (*Client, string) {
+	if len(indexes) == 0 {
+		return nil, ""
+	}
+
+	if len(indexes) == 1 {
+		idx := indexes[0]
+		return clients[idx], ids[idx]
+	}
+
+	weights := make([]float64, len(indexes))
+	var total float64
+
+	for i, idx := range indexes {
+		client := clients[idx]
+		loadWeight := float64(client.loadActive()) + 1
+		avg := client.averageProcessing()
+		if avg <= 0 {
+			avg = defaultProcessingMs
+		}
+		weight := 1 / (loadWeight * avg)
+		weights[i] = weight
+		total += weight
+	}
+
+	if total <= 0 {
+		idx := indexes[rand.Intn(len(indexes))]
+		return clients[idx], ids[idx]
+	}
+
+	pick := rand.Float64() * total
+	for i, weight := range weights {
+		pick -= weight
+		if pick <= 0 {
+			idx := indexes[i]
+			return clients[idx], ids[idx]
+		}
+	}
+
+	idx := indexes[len(indexes)-1]
+	return clients[idx], ids[idx]
 }
 
 func cloneForwardResponse(src *types.ForwardResponse) *types.ForwardResponse {

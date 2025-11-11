@@ -56,6 +56,7 @@ message ForwardResponse {
 
 message Heartbeat {
   int64 timestamp = 1;
+  double average_processing_ms = 2;
 }
 
 message ModelUpdateRequest {

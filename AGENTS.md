@@ -73,3 +73,8 @@ Synapse is a reverse proxy system for LLM APIs with two main components:
 - `github.com/gorilla/websocket` - WebSocket implementation
 - Go 1.23+ required
 - No other external dependencies
+
+## Protobuf Schema
+- Protocol message definitions live in `internal/types/proto/messages.proto`, and the generated Go bindings are kept in `internal/types/proto/messages.pb.go`.
+- After making changes to `messages.proto`, run `protoc --go_out=. --go_opt=paths=source_relative internal/types/proto/messages.proto` from the repo root to regenerate the Go file.
+- If `protoc` is not installed, install it (and the headers) with `sudo apt install libprotobuf-dev protobuf-compiler` before rerunning the generation command.

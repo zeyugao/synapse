@@ -28,6 +28,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+const processingEMAAlpha = 0.2
+
 type Client struct {
 	BaseUrl         string
 	ServerURL       string
@@ -50,6 +52,9 @@ type Client struct {
 	Semver          string
 	connClosed      chan struct{} // Channel to signal connection closed
 	msgPool         sync.Pool
+	metricsMu       sync.Mutex
+	requestTimings  map[string]time.Time
+	avgProcessMs    float64
 }
 
 func NewClient(baseUrl, serverURL string, version string, semver string) *Client {
@@ -64,6 +69,7 @@ func NewClient(baseUrl, serverURL string, version string, semver string) *Client
 		syncTicker:      time.NewTicker(30 * time.Second),
 		shutdownSignal:  make(chan struct{}),
 		connClosed:      make(chan struct{}),
+		requestTimings:  make(map[string]time.Time),
 	}
 	client.msgPool = sync.Pool{
 		New: func() any {
@@ -197,9 +203,11 @@ func (c *Client) heartbeatLoop() {
 		}
 
 		heartbeat := c.getClientMessage()
+		avgMs := c.averageProcessingMillis()
 		heartbeat.Message = &pb.ClientMessage_Heartbeat{
 			Heartbeat: &types.Heartbeat{
-				Timestamp: time.Now().Unix(),
+				Timestamp:           time.Now().Unix(),
+				AverageProcessingMs: avgMs,
 			},
 		}
 		if err := c.writeProto(heartbeat); err != nil {
@@ -353,7 +361,11 @@ func readServerMessage(conn *websocket.Conn) (*types.ServerMessage, error) {
 
 func (c *Client) forwardRequest(req *types.ForwardRequest) {
 	c.trackRequest(true)
-	defer c.trackRequest(false)
+	c.startRequestTimer(req.GetRequestId())
+	defer func() {
+		c.finishRequestTimer(req.GetRequestId())
+		c.trackRequest(false)
+	}()
 
 	// Create a cancellable context
 	ctx, cancel := context.WithCancel(context.Background())
@@ -669,6 +681,52 @@ func (c *Client) trackRequest(start bool) {
 	} else {
 		atomic.AddInt64(&c.activeRequests, -1)
 	}
+}
+
+func (c *Client) startRequestTimer(requestID string) {
+	if requestID == "" {
+		return
+	}
+	c.metricsMu.Lock()
+	c.requestTimings[requestID] = time.Now()
+	c.metricsMu.Unlock()
+}
+
+func (c *Client) finishRequestTimer(requestID string) {
+	if requestID == "" {
+		return
+	}
+	c.metricsMu.Lock()
+	start, ok := c.requestTimings[requestID]
+	if ok {
+		delete(c.requestTimings, requestID)
+	}
+	c.metricsMu.Unlock()
+	if !ok {
+		return
+	}
+	c.recordProcessingDuration(time.Since(start))
+}
+
+func (c *Client) recordProcessingDuration(duration time.Duration) {
+	millis := float64(duration) / float64(time.Millisecond)
+	if millis < 0 {
+		millis = 0
+	}
+
+	c.metricsMu.Lock()
+	if c.avgProcessMs == 0 {
+		c.avgProcessMs = millis
+	} else {
+		c.avgProcessMs = processingEMAAlpha*millis + (1-processingEMAAlpha)*c.avgProcessMs
+	}
+	c.metricsMu.Unlock()
+}
+
+func (c *Client) averageProcessingMillis() float64 {
+	c.metricsMu.Lock()
+	defer c.metricsMu.Unlock()
+	return c.avgProcessMs
 }
 
 func (c *Client) waitForRequests() <-chan struct{} {

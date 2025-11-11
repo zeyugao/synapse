@@ -495,10 +495,11 @@ func (x *ForwardResponse) GetTimestamp() int64 {
 }
 
 type Heartbeat struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Timestamp     int64                  `protobuf:"varint,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	Timestamp           int64                  `protobuf:"varint,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	AverageProcessingMs float64                `protobuf:"fixed64,2,opt,name=average_processing_ms,json=averageProcessingMs,proto3" json:"average_processing_ms,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *Heartbeat) Reset() {
@@ -534,6 +535,13 @@ func (*Heartbeat) Descriptor() ([]byte, []int) {
 func (x *Heartbeat) GetTimestamp() int64 {
 	if x != nil {
 		return x.Timestamp
+	}
+	return 0
+}
+
+func (x *Heartbeat) GetAverageProcessingMs() float64 {
+	if x != nil {
+		return x.AverageProcessingMs
 	}
 	return 0
 }
@@ -1041,9 +1049,10 @@ const file_internal_types_proto_messages_proto_rawDesc = "" +
 	"\x04body\x18\x04 \x01(\fR\x04body\x12/\n" +
 	"\x04kind\x18\x05 \x01(\x0e2\x1b.synapse.types.ResponseKindR\x04kind\x12\x12\n" +
 	"\x04done\x18\x06 \x01(\bR\x04done\x12\x1c\n" +
-	"\ttimestamp\x18\a \x01(\x03R\ttimestamp\")\n" +
+	"\ttimestamp\x18\a \x01(\x03R\ttimestamp\"]\n" +
 	"\tHeartbeat\x12\x1c\n" +
-	"\ttimestamp\x18\x01 \x01(\x03R\ttimestamp\"c\n" +
+	"\ttimestamp\x18\x01 \x01(\x03R\ttimestamp\x122\n" +
+	"\x15average_processing_ms\x18\x02 \x01(\x01R\x13averageProcessingMs\"c\n" +
 	"\x12ModelUpdateRequest\x12\x1b\n" +
 	"\tclient_id\x18\x01 \x01(\tR\bclientId\x120\n" +
 	"\x06models\x18\x02 \x03(\v2\x18.synapse.types.ModelInfoR\x06models\"0\n" +
