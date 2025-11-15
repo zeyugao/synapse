@@ -14,6 +14,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -167,7 +168,7 @@ func (c *Client) Connect() error {
 	c.conn = conn
 	serverToPrint := wsURL
 	if c.WSAuthKey != "" {
-		serverToPrint = strings.ReplaceAll(wsURL, c.WSAuthKey, "...", )
+		serverToPrint = strings.ReplaceAll(wsURL, c.WSAuthKey, "...")
 	}
 	log.Printf("Successfully connected to server %s", serverToPrint)
 
@@ -288,10 +289,11 @@ func (c *Client) handleRequests() {
 			// Add version error handling
 			if closeErr, ok := err.(*websocket.CloseError); ok {
 				switch closeErr.Code {
-				case 4000:
-					log.Fatalf("Version error: %s", closeErr.Text)
-				case 4001:
-					log.Fatalf("Version mismatch: %s", closeErr.Text)
+				case 4000, 4001:
+					if err := c.handleVersionMismatch(closeErr); err != nil {
+						log.Fatalf("Version mismatch: %v", err)
+					}
+					return
 				}
 			}
 
@@ -344,6 +346,21 @@ func (c *Client) handleUpdateRequired(update *types.UpdateRequired) error {
 	}
 
 	log.Printf("Server requires client version %s, downloading new binary from %s", targetVersion, downloadURL)
+	return c.performSelfUpdate(downloadURL, targetVersion)
+}
+
+func (c *Client) handleVersionMismatch(closeErr *websocket.CloseError) error {
+	downloadURL, base := c.inferDownloadURL()
+	if downloadURL == "" {
+		return fmt.Errorf("server reported version mismatch (%s) but download URL is unknown", closeErr.Text)
+	}
+
+	targetVersion := c.fetchServerVersion(base)
+	if targetVersion == "" {
+		targetVersion = "unknown"
+	}
+
+	log.Printf("Server reported version mismatch (%s). Downloading required update from %s", closeErr.Text, downloadURL)
 	return c.performSelfUpdate(downloadURL, targetVersion)
 }
 
@@ -428,6 +445,63 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	return out.Sync()
+}
+
+func (c *Client) inferServerBaseURL() *url.URL {
+	parsed, err := url.Parse(c.ServerURL)
+	if err != nil {
+		log.Printf("Failed to parse server URL %q: %v", c.ServerURL, err)
+		return nil
+	}
+	parsed.Fragment = ""
+	parsed.RawQuery = ""
+	switch strings.ToLower(parsed.Scheme) {
+	case "wss":
+		parsed.Scheme = "https"
+	case "ws":
+		parsed.Scheme = "http"
+	case "":
+		parsed.Scheme = "http"
+	}
+	parsed.Path = ""
+	return parsed
+}
+
+func (c *Client) inferDownloadURL() (string, *url.URL) {
+	base := c.inferServerBaseURL()
+	if base == nil {
+		return "", nil
+	}
+	downloadURL := *base
+	downloadURL.Path = "/getclient"
+	return downloadURL.String(), base
+}
+
+func (c *Client) fetchServerVersion(base *url.URL) string {
+	if base == nil {
+		return ""
+	}
+	versionURL := *base
+	versionURL.Path = "/version"
+	resp, err := http.Get(versionURL.String())
+	if err != nil {
+		log.Printf("Failed to fetch server version: %v", err)
+		return ""
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("Failed to fetch server version: server returned %s", resp.Status)
+		return ""
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Printf("Failed to read server version payload: %v", err)
+		return ""
+	}
+
+	return strings.TrimSpace(string(data))
 }
 
 // signalConnectionClosed notifies that the connection has been closed
