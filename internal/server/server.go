@@ -196,8 +196,6 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	log.Printf("s.upgrader.Upgrade")
-
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("WebSocket upgrade failed from %s: %v", clientIP, err)
@@ -205,16 +203,12 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("WebSocket connection established from %s", clientIP)
-
 	initialMsg, err := s.readClientMessage(conn)
 	if err != nil {
 		log.Printf("Failed to read registration information from %s: %v", clientIP, err)
 		conn.Close()
 		return
 	}
-
-	log.Printf("Received initial registration message from %s", clientIP)
 
 	registration := initialMsg.GetRegistration()
 	if registration == nil {
@@ -224,8 +218,6 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		s.putClientMessage(initialMsg)
 		return
 	}
-
-	log.Printf("Client registration details from %s: ID=%s, Version=%s, Models=%d", clientIP, registration.GetClientId(), registration.GetVersion(), len(registration.GetModels()))
 
 	// Version check logic
 	clientID := registration.GetClientId()
@@ -237,8 +229,6 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		s.putClientMessage(initialMsg)
 		return
 	}
-
-	log.Printf("Client version %s, server version %s", version, s.version)
 
 	if version != s.version {
 		log.Printf("Client version mismatch (client: %s, server: %s) from %s", version, s.version, clientIP)
