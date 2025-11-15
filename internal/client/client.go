@@ -290,9 +290,7 @@ func (c *Client) handleRequests() {
 			if closeErr, ok := err.(*websocket.CloseError); ok {
 				switch closeErr.Code {
 				case 4000, 4001:
-					if err := c.handleVersionMismatch(closeErr); err != nil {
-						log.Fatalf("Version mismatch: %v", err)
-					}
+					log.Fatalf("Version mismatch: %v, shutting down client", err)
 					return
 				}
 			}
@@ -346,21 +344,6 @@ func (c *Client) handleUpdateRequired(update *types.UpdateRequired) error {
 	}
 
 	log.Printf("Server requires client version %s, downloading new binary from %s", targetVersion, downloadURL)
-	return c.performSelfUpdate(downloadURL, targetVersion)
-}
-
-func (c *Client) handleVersionMismatch(closeErr *websocket.CloseError) error {
-	downloadURL, base := c.inferDownloadURL()
-	if downloadURL == "" {
-		return fmt.Errorf("server reported version mismatch (%s) but download URL is unknown", closeErr.Text)
-	}
-
-	targetVersion := c.fetchServerVersion(base)
-	if targetVersion == "" {
-		targetVersion = "unknown"
-	}
-
-	log.Printf("Server reported version mismatch (%s). Downloading required update from %s", closeErr.Text, downloadURL)
 	return c.performSelfUpdate(downloadURL, targetVersion)
 }
 
