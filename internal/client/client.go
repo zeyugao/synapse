@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -54,7 +55,6 @@ type Client struct {
 	shutdownOnce    sync.Once
 	activeRequests  int64 // Atomic counter
 	Version         string
-	Semver          string
 	connClosed      chan struct{} // Channel to signal connection closed
 	msgPool         sync.Pool
 	metricsMu       sync.Mutex
@@ -62,13 +62,12 @@ type Client struct {
 	modelProcessMs  map[string]float64
 }
 
-func NewClient(baseUrl, serverURL string, version string, semver string) *Client {
+func NewClient(baseUrl, serverURL string, version string) *Client {
 	client := &Client{
 		BaseUrl:         baseUrl,
 		ServerURL:       serverURL,
 		ClientID:        generateClientID(),
 		Version:         version,
-		Semver:          semver,
 		cancelMap:       make(map[string]context.CancelFunc),
 		heartbeatTicker: time.NewTicker(15 * time.Second),
 		syncTicker:      time.NewTicker(30 * time.Second),
@@ -178,7 +177,6 @@ func (c *Client) Connect() error {
 			ClientId: c.ClientID,
 			Models:   cloneModelInfos(c.models),
 			Version:  c.Version,
-			Semver:   c.Semver,
 		},
 	}
 	if err := c.writeProto(registration); err != nil {
@@ -320,10 +318,116 @@ func (c *Client) handleRequests() {
 			}
 		case *pb.ServerMessage_Pong:
 			// Ignore pong
+		case *pb.ServerMessage_UpdateRequired:
+			if payload.UpdateRequired == nil {
+				continue
+			}
+			if err := c.handleUpdateRequired(payload.UpdateRequired); err != nil {
+				log.Fatalf("Failed to apply required update: %v", err)
+			}
+			return
 		default:
 			log.Printf("Unknown server message type: %T", payload)
 		}
 	}
+}
+
+func (c *Client) handleUpdateRequired(update *types.UpdateRequired) error {
+	downloadURL := strings.TrimSpace(update.GetDownloadUrl())
+	if downloadURL == "" {
+		return fmt.Errorf("server requested update to version %q but did not provide a download URL", update.GetVersion())
+	}
+
+	targetVersion := update.GetVersion()
+	if targetVersion == "" {
+		targetVersion = "unknown"
+	}
+
+	log.Printf("Server requires client version %s, downloading new binary from %s", targetVersion, downloadURL)
+	return c.performSelfUpdate(downloadURL, targetVersion)
+}
+
+func (c *Client) performSelfUpdate(downloadURL, targetVersion string) error {
+	resp, err := http.Get(downloadURL)
+	if err != nil {
+		return fmt.Errorf("failed to download client binary: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("download failed with status %s", resp.Status)
+	}
+
+	exePath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("failed to determine executable path: %w", err)
+	}
+
+	exeDir := filepath.Dir(exePath)
+	tmpFile, err := os.CreateTemp(exeDir, "synapse-client-update-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temporary file for update: %w", err)
+	}
+
+	tmpPath := tmpFile.Name()
+	defer func() {
+		if tmpFile != nil {
+			tmpFile.Close()
+		}
+		os.Remove(tmpPath)
+	}()
+
+	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
+		return fmt.Errorf("failed to write downloaded binary: %w", err)
+	}
+
+	if err := tmpFile.Chmod(0o755); err != nil {
+		return fmt.Errorf("failed to set permissions on new binary: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("failed to finalize downloaded binary: %w", err)
+	}
+	tmpFile = nil
+
+	if err := c.backupExecutable(exePath); err != nil {
+		return fmt.Errorf("failed to backup current binary: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, exePath); err != nil {
+		return fmt.Errorf("failed to replace binary: %w", err)
+	}
+
+	log.Printf("Client updated to version %s, restarting process", targetVersion)
+	return syscall.Exec(exePath, os.Args, os.Environ())
+}
+
+func (c *Client) backupExecutable(exePath string) error {
+	backupPath := exePath + ".bak"
+	if err := copyFile(exePath, backupPath); err != nil {
+		return err
+	}
+	return os.Chmod(backupPath, 0o755)
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		out.Close()
+	}()
+
+	if _, err := io.Copy(out, in); err != nil {
+		return err
+	}
+	return out.Sync()
 }
 
 // signalConnectionClosed notifies that the connection has been closed

@@ -11,8 +11,7 @@ import (
 )
 
 var (
-	version = "dev"   // Default value, will be overwritten at compile time
-	semver  = "0.0.0" // Default semantic version, override at compile time
+	version = "dev" // Default value, will be overwritten at compile time
 )
 
 func main() {
@@ -30,7 +29,6 @@ func main() {
 	wsAuthKey := flag.String("ws-auth-key", "", "WebSocket registration authentication key")
 	printVersion := flag.Bool("version", false, "Print version number")
 	clientBinary := flag.String("client-binary", defaultClientPath, "Client binary file path")
-	abortOnClientVersionMismatch := flag.Bool("abort-on-client-version-mismatch", false, "Abort the server if the client version is not the same as the server version")
 	flag.Parse()
 
 	if _, err := os.Stat(*clientBinary); os.IsNotExist(err) {
@@ -42,7 +40,7 @@ func main() {
 		return
 	}
 
-	server := server.NewServer(*apiAuthKey, *wsAuthKey, version, semver, *clientBinary, *abortOnClientVersionMismatch)
+	server := server.NewServer(*apiAuthKey, *wsAuthKey, version, *clientBinary)
 	log.Printf("Starting server on %s:%s", *host, *port)
 	if err := server.Start(*host, *port); err != nil {
 		log.Fatal(err)

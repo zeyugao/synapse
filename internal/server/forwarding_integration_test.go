@@ -28,12 +28,12 @@ func TestForwardingIntegrationMatchesOpenAIClient(t *testing.T) {
 	defer backend.Close()
 
 	serverAPIKey := "synapse-server-api-key"
-	srv := NewServer(serverAPIKey, "", "test-version", "1.0.0", "", false)
+	srv := NewServer(serverAPIKey, "", "test-version", "")
 
 	httpBaseURL, wsURL, shutdownServer := startSynapseHTTPServer(t, srv)
 	defer shutdownServer()
 
-	client := synapseclient.NewClient(backend.BaseURL()+"/v1", wsURL, "client-version", "1.0.0")
+	client := synapseclient.NewClient(backend.BaseURL()+"/v1", wsURL, "test-version")
 	client.ApiKey = backend.apiKey
 	if err := client.Connect(); err != nil {
 		t.Fatalf("failed to start synapse client: %v", err)

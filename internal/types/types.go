@@ -23,6 +23,7 @@ type (
 	Heartbeat            = pb.Heartbeat
 	ClientClose          = pb.ClientClose
 	Pong                 = pb.Pong
+	UpdateRequired       = pb.UpdateRequired
 )
 
 const (

@@ -9,10 +9,10 @@ import (
 	"io"
 	"log"
 	"math/rand"
+	"net"
 	"net/http"
 	"os"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,25 +26,22 @@ import (
 const responseChannelBuffer = 8
 
 type Server struct {
-	clients                      map[string]*Client
-	modelClients                 map[string][]string // model -> []clientID
-	mu                           sync.RWMutex
-	upgrader                     websocket.Upgrader
-	pendingRequests              map[string]chan *types.ForwardResponse
-	reqMu                        sync.RWMutex
-	apiAuthKey                   string
-	wsAuthKey                    string
-	clientRequests               map[string]map[string]struct{} // clientID -> set of requestIDs
-	version                      string
-	semver                       string
-	semverMajor                  int
-	clientBinaryPath             string
-	abortOnClientVersionMismatch bool
-	clientMsgPool                sync.Pool
-	serverMsgPool                sync.Pool
-	pongFrame                    []byte
-	modelsCache                  []byte
-	modelsCacheDirty             bool
+	clients          map[string]*Client
+	modelClients     map[string][]string // model -> []clientID
+	mu               sync.RWMutex
+	upgrader         websocket.Upgrader
+	pendingRequests  map[string]chan *types.ForwardResponse
+	reqMu            sync.RWMutex
+	apiAuthKey       string
+	wsAuthKey        string
+	clientRequests   map[string]map[string]struct{} // clientID -> set of requestIDs
+	version          string
+	clientBinaryPath string
+	clientMsgPool    sync.Pool
+	serverMsgPool    sync.Pool
+	pongFrame        []byte
+	modelsCache      []byte
+	modelsCacheDirty bool
 }
 
 type Client struct {
@@ -120,12 +117,7 @@ func (c *Client) processingForModel(modelID string) float64 {
 	return c.modelAverages[modelID]
 }
 
-func NewServer(apiAuthKey, wsAuthKey string, version string, semver string, clientBinaryPath string, abortOnClientVersionMismatch bool) *Server {
-	semverMajor, err := parseSemverMajor(semver)
-	if err != nil {
-		log.Fatalf("invalid server semantic version %q: %v", semver, err)
-	}
-
+func NewServer(apiAuthKey, wsAuthKey string, version string, clientBinaryPath string) *Server {
 	server := &Server{
 		clients:         make(map[string]*Client),
 		modelClients:    make(map[string][]string),
@@ -138,12 +130,9 @@ func NewServer(apiAuthKey, wsAuthKey string, version string, semver string, clie
 				return true
 			},
 		},
-		version:                      version,
-		semver:                       semver,
-		semverMajor:                  semverMajor,
-		clientBinaryPath:             clientBinaryPath,
-		abortOnClientVersionMismatch: abortOnClientVersionMismatch,
-		modelsCacheDirty:             true,
+		version:          version,
+		clientBinaryPath: clientBinaryPath,
+		modelsCacheDirty: true,
 	}
 
 	server.clientMsgPool = sync.Pool{
@@ -173,32 +162,6 @@ func generateRequestID() string {
 	b := make([]byte, 16)
 	cryptoRand.Read(b)
 	return hex.EncodeToString(b)
-}
-
-func parseSemverMajor(ver string) (int, error) {
-	trimmed := strings.TrimSpace(ver)
-	if trimmed == "" {
-		return 0, fmt.Errorf("empty semantic version")
-	}
-	if trimmed[0] == 'v' || trimmed[0] == 'V' {
-		trimmed = trimmed[1:]
-	}
-	parts := strings.Split(trimmed, ".")
-	if len(parts) < 2 {
-		return 0, fmt.Errorf("semantic version %q must include major and minor components", ver)
-	}
-	majorComponent := strings.TrimSpace(parts[0])
-	if majorComponent == "" {
-		return 0, fmt.Errorf("semantic version %q has empty major component", ver)
-	}
-	major, err := strconv.Atoi(majorComponent)
-	if err != nil {
-		return 0, fmt.Errorf("invalid major component in semantic version %q: %w", ver, err)
-	}
-	if major < 0 {
-		return 0, fmt.Errorf("semantic version %q has negative major component", ver)
-	}
-	return major, nil
 }
 
 func (s *Server) readClientMessage(conn *websocket.Conn) (*types.ClientMessage, error) {
@@ -269,36 +232,8 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	if version != s.version {
 		log.Printf("Client version mismatch (client: %s, server: %s) from %s", version, s.version, clientIP)
-		if s.abortOnClientVersionMismatch {
-			log.Printf("Aborting server because client version mismatch from %s", clientIP)
-			conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(4001, fmt.Sprintf("Client version %s does not match server version %s", version, s.version)))
-			conn.Close()
-			s.putClientMessage(initialMsg)
-			return
-		}
-	}
-
-	clientSemver := registration.GetSemver()
-	if clientSemver == "" {
-		log.Printf("Client %s from %s did not provide a semantic version, connection refused", clientID, clientIP)
-		conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(4002, "Semantic version required"))
-		conn.Close()
-		s.putClientMessage(initialMsg)
-		return
-	}
-
-	clientSemverMajor, err := parseSemverMajor(clientSemver)
-	if err != nil {
-		log.Printf("Client %s from %s provided invalid semantic version %q: %v", clientID, clientIP, clientSemver, err)
-		conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(4003, "Invalid semantic version"))
-		conn.Close()
-		s.putClientMessage(initialMsg)
-		return
-	}
-
-	if clientSemverMajor != s.semverMajor {
-		log.Printf("Client semantic version mismatch (client: %s, server: %s) from %s", clientSemver, s.semver, clientIP)
-		conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(4004, fmt.Sprintf("Client major version %d does not match server major version %d", clientSemverMajor, s.semverMajor)))
+		s.notifyClientUpdate(conn, r)
+		conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(4001, fmt.Sprintf("Client version %s does not match server version %s", version, s.version)))
 		conn.Close()
 		s.putClientMessage(initialMsg)
 		return
@@ -329,6 +264,69 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	// Add goroutine for handling responses
 	go s.handleClientResponses(clientID, client)
+}
+
+func (s *Server) notifyClientUpdate(conn *websocket.Conn, r *http.Request) {
+	downloadURL := s.buildClientDownloadURL(r)
+	msg := &types.ServerMessage{
+		Message: &pb.ServerMessage_UpdateRequired{
+			UpdateRequired: &types.UpdateRequired{
+				Version:     s.version,
+				DownloadUrl: downloadURL,
+			},
+		},
+	}
+
+	data, err := proto.Marshal(msg)
+	if err != nil {
+		log.Printf("Failed to marshal update notification: %v", err)
+		return
+	}
+	if err := conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
+		log.Printf("Failed to send update notification: %v", err)
+	}
+}
+
+func (s *Server) buildClientDownloadURL(r *http.Request) string {
+	if s.clientBinaryPath == "" {
+		return ""
+	}
+	if _, err := os.Stat(s.clientBinaryPath); err != nil {
+		if os.IsNotExist(err) {
+			log.Printf("Client binary not found at %s", s.clientBinaryPath)
+		} else {
+			log.Printf("Failed to stat client binary: %v", err)
+		}
+		return ""
+	}
+
+	protoScheme := "http"
+	if r.TLS != nil {
+		protoScheme = "https"
+	}
+	if forwardedProto := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")); forwardedProto != "" {
+		protoScheme = forwardedProto
+	}
+
+	host := strings.TrimSpace(r.Host)
+	if forwardedHost := strings.TrimSpace(r.Header.Get("X-Forwarded-Host")); forwardedHost != "" {
+		host = strings.TrimSpace(strings.Split(forwardedHost, ",")[0])
+	}
+	if host == "" && r.URL != nil {
+		host = strings.TrimSpace(r.URL.Host)
+	}
+	if host == "" {
+		host = "localhost"
+	}
+
+	if forwardedPort := strings.TrimSpace(r.Header.Get("X-Forwarded-Port")); forwardedPort != "" {
+		port := strings.TrimSpace(strings.Split(forwardedPort, ",")[0])
+		if port != "" && !hostHasExplicitPort(host) {
+			host = net.JoinHostPort(stripIPv6Brackets(host), port)
+		}
+	}
+
+	return fmt.Sprintf("%s://%s/getclient", protoScheme, host)
 }
 
 func (s *Server) handleClientResponses(clientID string, client *Client) {
@@ -1118,6 +1116,24 @@ exec "$synapseClientPath" --server-url "$wsUrl" "$@"
 		log.Printf("Failed to send one-key installation script: %v", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 	}
+}
+
+func hostHasExplicitPort(host string) bool {
+	if host == "" {
+		return false
+	}
+	if _, _, err := net.SplitHostPort(host); err == nil {
+		return true
+	}
+	return false
+}
+
+func stripIPv6Brackets(host string) string {
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = strings.TrimPrefix(host, "[")
+		host = strings.TrimSuffix(host, "]")
+	}
+	return host
 }
 
 func (s *Server) Start(host string, port string) error {

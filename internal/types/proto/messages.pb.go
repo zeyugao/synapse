@@ -195,7 +195,6 @@ type ClientRegistration struct {
 	ClientId      string                 `protobuf:"bytes,1,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
 	Models        []*ModelInfo           `protobuf:"bytes,2,rep,name=models,proto3" json:"models,omitempty"`
 	Version       string                 `protobuf:"bytes,3,opt,name=version,proto3" json:"version,omitempty"`
-	Semver        string                 `protobuf:"bytes,4,opt,name=semver,proto3" json:"semver,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -247,13 +246,6 @@ func (x *ClientRegistration) GetModels() []*ModelInfo {
 func (x *ClientRegistration) GetVersion() string {
 	if x != nil {
 		return x.Version
-	}
-	return ""
-}
-
-func (x *ClientRegistration) GetSemver() string {
-	if x != nil {
-		return x.Semver
 	}
 	return ""
 }
@@ -818,6 +810,58 @@ func (x *ClientClose) GetRequestId() string {
 	return ""
 }
 
+type UpdateRequired struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Version       string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
+	DownloadUrl   string                 `protobuf:"bytes,2,opt,name=download_url,json=downloadUrl,proto3" json:"download_url,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UpdateRequired) Reset() {
+	*x = UpdateRequired{}
+	mi := &file_internal_types_proto_messages_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateRequired) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateRequired) ProtoMessage() {}
+
+func (x *UpdateRequired) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_types_proto_messages_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateRequired.ProtoReflect.Descriptor instead.
+func (*UpdateRequired) Descriptor() ([]byte, []int) {
+	return file_internal_types_proto_messages_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *UpdateRequired) GetVersion() string {
+	if x != nil {
+		return x.Version
+	}
+	return ""
+}
+
+func (x *UpdateRequired) GetDownloadUrl() string {
+	if x != nil {
+		return x.DownloadUrl
+	}
+	return ""
+}
+
 type ServerMessage struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Message:
@@ -825,6 +869,7 @@ type ServerMessage struct {
 	//	*ServerMessage_ForwardRequest
 	//	*ServerMessage_ClientClose
 	//	*ServerMessage_Pong
+	//	*ServerMessage_UpdateRequired
 	Message       isServerMessage_Message `protobuf_oneof:"message"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -832,7 +877,7 @@ type ServerMessage struct {
 
 func (x *ServerMessage) Reset() {
 	*x = ServerMessage{}
-	mi := &file_internal_types_proto_messages_proto_msgTypes[13]
+	mi := &file_internal_types_proto_messages_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -844,7 +889,7 @@ func (x *ServerMessage) String() string {
 func (*ServerMessage) ProtoMessage() {}
 
 func (x *ServerMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_types_proto_messages_proto_msgTypes[13]
+	mi := &file_internal_types_proto_messages_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -857,7 +902,7 @@ func (x *ServerMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServerMessage.ProtoReflect.Descriptor instead.
 func (*ServerMessage) Descriptor() ([]byte, []int) {
-	return file_internal_types_proto_messages_proto_rawDescGZIP(), []int{13}
+	return file_internal_types_proto_messages_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ServerMessage) GetMessage() isServerMessage_Message {
@@ -894,6 +939,15 @@ func (x *ServerMessage) GetPong() *Pong {
 	return nil
 }
 
+func (x *ServerMessage) GetUpdateRequired() *UpdateRequired {
+	if x != nil {
+		if x, ok := x.Message.(*ServerMessage_UpdateRequired); ok {
+			return x.UpdateRequired
+		}
+	}
+	return nil
+}
+
 type isServerMessage_Message interface {
 	isServerMessage_Message()
 }
@@ -910,11 +964,17 @@ type ServerMessage_Pong struct {
 	Pong *Pong `protobuf:"bytes,3,opt,name=pong,proto3,oneof"`
 }
 
+type ServerMessage_UpdateRequired struct {
+	UpdateRequired *UpdateRequired `protobuf:"bytes,4,opt,name=update_required,json=updateRequired,proto3,oneof"`
+}
+
 func (*ServerMessage_ForwardRequest) isServerMessage_Message() {}
 
 func (*ServerMessage_ClientClose) isServerMessage_Message() {}
 
 func (*ServerMessage_Pong) isServerMessage_Message() {}
+
+func (*ServerMessage_UpdateRequired) isServerMessage_Message() {}
 
 type ClientMessage struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -933,7 +993,7 @@ type ClientMessage struct {
 
 func (x *ClientMessage) Reset() {
 	*x = ClientMessage{}
-	mi := &file_internal_types_proto_messages_proto_msgTypes[14]
+	mi := &file_internal_types_proto_messages_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -945,7 +1005,7 @@ func (x *ClientMessage) String() string {
 func (*ClientMessage) ProtoMessage() {}
 
 func (x *ClientMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_types_proto_messages_proto_msgTypes[14]
+	mi := &file_internal_types_proto_messages_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -958,7 +1018,7 @@ func (x *ClientMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClientMessage.ProtoReflect.Descriptor instead.
 func (*ClientMessage) Descriptor() ([]byte, []int) {
-	return file_internal_types_proto_messages_proto_rawDescGZIP(), []int{14}
+	return file_internal_types_proto_messages_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ClientMessage) GetMessage() isClientMessage_Message {
@@ -1074,12 +1134,11 @@ const file_internal_types_proto_messages_proto_rawDesc = "" +
 	"\bowned_by\x18\x04 \x01(\tR\aownedBy\"V\n" +
 	"\x0eModelsResponse\x12\x16\n" +
 	"\x06object\x18\x01 \x01(\tR\x06object\x12,\n" +
-	"\x04data\x18\x02 \x03(\v2\x18.synapse.types.ModelInfoR\x04data\"\x95\x01\n" +
+	"\x04data\x18\x02 \x03(\v2\x18.synapse.types.ModelInfoR\x04data\"\x83\x01\n" +
 	"\x12ClientRegistration\x12\x1b\n" +
 	"\tclient_id\x18\x01 \x01(\tR\bclientId\x120\n" +
 	"\x06models\x18\x02 \x03(\v2\x18.synapse.types.ModelInfoR\x06models\x12\x18\n" +
-	"\aversion\x18\x03 \x01(\tR\aversion\x12\x16\n" +
-	"\x06semver\x18\x04 \x01(\tR\x06semver\"7\n" +
+	"\aversion\x18\x03 \x01(\tR\aversionJ\x04\b\x04\x10\x05\"7\n" +
 	"\vHeaderEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x16\n" +
 	"\x06values\x18\x02 \x03(\tR\x06values\"\xcf\x01\n" +
@@ -1120,11 +1179,15 @@ const file_internal_types_proto_messages_proto_rawDesc = "" +
 	"\x04Pong\",\n" +
 	"\vClientClose\x12\x1d\n" +
 	"\n" +
-	"request_id\x18\x01 \x01(\tR\trequestId\"\xd0\x01\n" +
+	"request_id\x18\x01 \x01(\tR\trequestId\"M\n" +
+	"\x0eUpdateRequired\x12\x18\n" +
+	"\aversion\x18\x01 \x01(\tR\aversion\x12!\n" +
+	"\fdownload_url\x18\x02 \x01(\tR\vdownloadUrl\"\x9a\x02\n" +
 	"\rServerMessage\x12H\n" +
 	"\x0fforward_request\x18\x01 \x01(\v2\x1d.synapse.types.ForwardRequestH\x00R\x0eforwardRequest\x12?\n" +
 	"\fclient_close\x18\x02 \x01(\v2\x1a.synapse.types.ClientCloseH\x00R\vclientClose\x12)\n" +
-	"\x04pong\x18\x03 \x01(\v2\x13.synapse.types.PongH\x00R\x04pongB\t\n" +
+	"\x04pong\x18\x03 \x01(\v2\x13.synapse.types.PongH\x00R\x04pong\x12H\n" +
+	"\x0fupdate_required\x18\x04 \x01(\v2\x1d.synapse.types.UpdateRequiredH\x00R\x0eupdateRequiredB\t\n" +
 	"\amessage\"\xc4\x03\n" +
 	"\rClientMessage\x12G\n" +
 	"\fregistration\x18\x01 \x01(\v2!.synapse.types.ClientRegistrationH\x00R\fregistration\x12K\n" +
@@ -1154,7 +1217,7 @@ func file_internal_types_proto_messages_proto_rawDescGZIP() []byte {
 }
 
 var file_internal_types_proto_messages_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_internal_types_proto_messages_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_internal_types_proto_messages_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_internal_types_proto_messages_proto_goTypes = []any{
 	(ResponseKind)(0),            // 0: synapse.types.ResponseKind
 	(*ModelInfo)(nil),            // 1: synapse.types.ModelInfo
@@ -1170,8 +1233,9 @@ var file_internal_types_proto_messages_proto_goTypes = []any{
 	(*ForceShutdownRequest)(nil), // 11: synapse.types.ForceShutdownRequest
 	(*Pong)(nil),                 // 12: synapse.types.Pong
 	(*ClientClose)(nil),          // 13: synapse.types.ClientClose
-	(*ServerMessage)(nil),        // 14: synapse.types.ServerMessage
-	(*ClientMessage)(nil),        // 15: synapse.types.ClientMessage
+	(*UpdateRequired)(nil),       // 14: synapse.types.UpdateRequired
+	(*ServerMessage)(nil),        // 15: synapse.types.ServerMessage
+	(*ClientMessage)(nil),        // 16: synapse.types.ClientMessage
 }
 var file_internal_types_proto_messages_proto_depIdxs = []int32{
 	1,  // 0: synapse.types.ModelsResponse.data:type_name -> synapse.types.ModelInfo
@@ -1184,17 +1248,18 @@ var file_internal_types_proto_messages_proto_depIdxs = []int32{
 	5,  // 7: synapse.types.ServerMessage.forward_request:type_name -> synapse.types.ForwardRequest
 	13, // 8: synapse.types.ServerMessage.client_close:type_name -> synapse.types.ClientClose
 	12, // 9: synapse.types.ServerMessage.pong:type_name -> synapse.types.Pong
-	3,  // 10: synapse.types.ClientMessage.registration:type_name -> synapse.types.ClientRegistration
-	6,  // 11: synapse.types.ClientMessage.forward_response:type_name -> synapse.types.ForwardResponse
-	8,  // 12: synapse.types.ClientMessage.heartbeat:type_name -> synapse.types.Heartbeat
-	9,  // 13: synapse.types.ClientMessage.model_update:type_name -> synapse.types.ModelUpdateRequest
-	10, // 14: synapse.types.ClientMessage.unregister:type_name -> synapse.types.UnregisterRequest
-	11, // 15: synapse.types.ClientMessage.force_shutdown:type_name -> synapse.types.ForceShutdownRequest
-	16, // [16:16] is the sub-list for method output_type
-	16, // [16:16] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	14, // 10: synapse.types.ServerMessage.update_required:type_name -> synapse.types.UpdateRequired
+	3,  // 11: synapse.types.ClientMessage.registration:type_name -> synapse.types.ClientRegistration
+	6,  // 12: synapse.types.ClientMessage.forward_response:type_name -> synapse.types.ForwardResponse
+	8,  // 13: synapse.types.ClientMessage.heartbeat:type_name -> synapse.types.Heartbeat
+	9,  // 14: synapse.types.ClientMessage.model_update:type_name -> synapse.types.ModelUpdateRequest
+	10, // 15: synapse.types.ClientMessage.unregister:type_name -> synapse.types.UnregisterRequest
+	11, // 16: synapse.types.ClientMessage.force_shutdown:type_name -> synapse.types.ForceShutdownRequest
+	17, // [17:17] is the sub-list for method output_type
+	17, // [17:17] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_internal_types_proto_messages_proto_init() }
@@ -1202,12 +1267,13 @@ func file_internal_types_proto_messages_proto_init() {
 	if File_internal_types_proto_messages_proto != nil {
 		return
 	}
-	file_internal_types_proto_messages_proto_msgTypes[13].OneofWrappers = []any{
+	file_internal_types_proto_messages_proto_msgTypes[14].OneofWrappers = []any{
 		(*ServerMessage_ForwardRequest)(nil),
 		(*ServerMessage_ClientClose)(nil),
 		(*ServerMessage_Pong)(nil),
+		(*ServerMessage_UpdateRequired)(nil),
 	}
-	file_internal_types_proto_messages_proto_msgTypes[14].OneofWrappers = []any{
+	file_internal_types_proto_messages_proto_msgTypes[15].OneofWrappers = []any{
 		(*ClientMessage_Registration)(nil),
 		(*ClientMessage_ForwardResponse)(nil),
 		(*ClientMessage_Heartbeat)(nil),
@@ -1221,7 +1287,7 @@ func file_internal_types_proto_messages_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_internal_types_proto_messages_proto_rawDesc), len(file_internal_types_proto_messages_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   15,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

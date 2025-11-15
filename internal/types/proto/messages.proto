@@ -20,7 +20,7 @@ message ClientRegistration {
   string client_id = 1;
   repeated ModelInfo models = 2;
   string version = 3;
-  string semver = 4;
+  reserved 4;
 }
 
 message HeaderEntry {
@@ -83,11 +83,17 @@ message ClientClose {
   string request_id = 1;
 }
 
+message UpdateRequired {
+  string version = 1;
+  string download_url = 2;
+}
+
 message ServerMessage {
   oneof message {
     ForwardRequest forward_request = 1;
     ClientClose client_close = 2;
     Pong pong = 3;
+    UpdateRequired update_required = 4;
   }
 }
 
