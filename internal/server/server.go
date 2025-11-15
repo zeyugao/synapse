@@ -24,10 +24,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const (
-	responseChannelBuffer = 8
-	defaultProcessingMs   = 1000
-)
+const responseChannelBuffer = 8
 
 type Server struct {
 	clients                      map[string]*Client
@@ -908,6 +905,22 @@ func selectClientByMetrics(clients []*Client, ids []string, indexes []int) (*Cli
 		return clients[idx], ids[idx]
 	}
 
+	var sumAvg float64
+	var countAvg int
+	for _, idx := range indexes {
+		if avg := clients[idx].averageProcessing(); avg > 0 {
+			sumAvg += avg
+			countAvg++
+		}
+	}
+
+	if countAvg == 0 {
+		idx := indexes[rand.Intn(len(indexes))]
+		return clients[idx], ids[idx]
+	}
+
+	groupAvg := sumAvg / float64(countAvg)
+
 	weights := make([]float64, len(indexes))
 	var total float64
 
@@ -916,7 +929,7 @@ func selectClientByMetrics(clients []*Client, ids []string, indexes []int) (*Cli
 		loadWeight := float64(client.loadActive()) + 1
 		avg := client.averageProcessing()
 		if avg <= 0 {
-			avg = defaultProcessingMs
+			avg = groupAvg
 		}
 		weight := 1 / (loadWeight * avg)
 		weights[i] = weight
