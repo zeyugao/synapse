@@ -167,7 +167,7 @@ func (c *Client) Connect() error {
 	c.conn = conn
 	serverToPrint := wsURL
 	if c.WSAuthKey != "" {
-		serverToPrint = strings.Replace(wsURL, c.WSAuthKey, "...", -1)
+		serverToPrint = strings.ReplaceAll(wsURL, c.WSAuthKey, "...", )
 	}
 	log.Printf("Successfully connected to server %s", serverToPrint)
 
