@@ -14,7 +14,6 @@ import (
 	"mime"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -469,63 +468,6 @@ func (c *Client) prepareUpdateFile(exePath string) (*os.File, string, bool, stri
 		return nil, "", false, "", err
 	}
 	return file, tmpPath, false, fallbackDir, nil
-}
-
-func (c *Client) inferServerBaseURL() *url.URL {
-	parsed, err := url.Parse(c.ServerURL)
-	if err != nil {
-		log.Printf("Failed to parse server URL %q: %v", c.ServerURL, err)
-		return nil
-	}
-	parsed.Fragment = ""
-	parsed.RawQuery = ""
-	switch strings.ToLower(parsed.Scheme) {
-	case "wss":
-		parsed.Scheme = "https"
-	case "ws":
-		parsed.Scheme = "http"
-	case "":
-		parsed.Scheme = "http"
-	}
-	parsed.Path = ""
-	return parsed
-}
-
-func (c *Client) inferDownloadURL() (string, *url.URL) {
-	base := c.inferServerBaseURL()
-	if base == nil {
-		return "", nil
-	}
-	downloadURL := *base
-	downloadURL.Path = "/getclient"
-	return downloadURL.String(), base
-}
-
-func (c *Client) fetchServerVersion(base *url.URL) string {
-	if base == nil {
-		return ""
-	}
-	versionURL := *base
-	versionURL.Path = "/version"
-	resp, err := http.Get(versionURL.String())
-	if err != nil {
-		log.Printf("Failed to fetch server version: %v", err)
-		return ""
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		log.Printf("Failed to fetch server version: server returned %s", resp.Status)
-		return ""
-	}
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		log.Printf("Failed to read server version payload: %v", err)
-		return ""
-	}
-
-	return strings.TrimSpace(string(data))
 }
 
 // signalConnectionClosed notifies that the connection has been closed
