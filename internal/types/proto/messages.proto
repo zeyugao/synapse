@@ -54,9 +54,14 @@ message ForwardResponse {
   int64 timestamp = 7;
 }
 
+message ModelProcessingStats {
+  string model_id = 1;
+  double average_processing_ms = 2;
+}
+
 message Heartbeat {
   int64 timestamp = 1;
-  double average_processing_ms = 2;
+  repeated ModelProcessingStats processing = 2;
 }
 
 message ModelUpdateRequest {

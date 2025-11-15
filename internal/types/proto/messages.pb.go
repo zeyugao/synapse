@@ -494,17 +494,69 @@ func (x *ForwardResponse) GetTimestamp() int64 {
 	return 0
 }
 
-type Heartbeat struct {
+type ModelProcessingStats struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
-	Timestamp           int64                  `protobuf:"varint,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	ModelId             string                 `protobuf:"bytes,1,opt,name=model_id,json=modelId,proto3" json:"model_id,omitempty"`
 	AverageProcessingMs float64                `protobuf:"fixed64,2,opt,name=average_processing_ms,json=averageProcessingMs,proto3" json:"average_processing_ms,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
 
+func (x *ModelProcessingStats) Reset() {
+	*x = ModelProcessingStats{}
+	mi := &file_internal_types_proto_messages_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ModelProcessingStats) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ModelProcessingStats) ProtoMessage() {}
+
+func (x *ModelProcessingStats) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_types_proto_messages_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ModelProcessingStats.ProtoReflect.Descriptor instead.
+func (*ModelProcessingStats) Descriptor() ([]byte, []int) {
+	return file_internal_types_proto_messages_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *ModelProcessingStats) GetModelId() string {
+	if x != nil {
+		return x.ModelId
+	}
+	return ""
+}
+
+func (x *ModelProcessingStats) GetAverageProcessingMs() float64 {
+	if x != nil {
+		return x.AverageProcessingMs
+	}
+	return 0
+}
+
+type Heartbeat struct {
+	state         protoimpl.MessageState  `protogen:"open.v1"`
+	Timestamp     int64                   `protobuf:"varint,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	Processing    []*ModelProcessingStats `protobuf:"bytes,2,rep,name=processing,proto3" json:"processing,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
 func (x *Heartbeat) Reset() {
 	*x = Heartbeat{}
-	mi := &file_internal_types_proto_messages_proto_msgTypes[6]
+	mi := &file_internal_types_proto_messages_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -516,7 +568,7 @@ func (x *Heartbeat) String() string {
 func (*Heartbeat) ProtoMessage() {}
 
 func (x *Heartbeat) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_types_proto_messages_proto_msgTypes[6]
+	mi := &file_internal_types_proto_messages_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -529,7 +581,7 @@ func (x *Heartbeat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Heartbeat.ProtoReflect.Descriptor instead.
 func (*Heartbeat) Descriptor() ([]byte, []int) {
-	return file_internal_types_proto_messages_proto_rawDescGZIP(), []int{6}
+	return file_internal_types_proto_messages_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *Heartbeat) GetTimestamp() int64 {
@@ -539,11 +591,11 @@ func (x *Heartbeat) GetTimestamp() int64 {
 	return 0
 }
 
-func (x *Heartbeat) GetAverageProcessingMs() float64 {
+func (x *Heartbeat) GetProcessing() []*ModelProcessingStats {
 	if x != nil {
-		return x.AverageProcessingMs
+		return x.Processing
 	}
-	return 0
+	return nil
 }
 
 type ModelUpdateRequest struct {
@@ -556,7 +608,7 @@ type ModelUpdateRequest struct {
 
 func (x *ModelUpdateRequest) Reset() {
 	*x = ModelUpdateRequest{}
-	mi := &file_internal_types_proto_messages_proto_msgTypes[7]
+	mi := &file_internal_types_proto_messages_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -568,7 +620,7 @@ func (x *ModelUpdateRequest) String() string {
 func (*ModelUpdateRequest) ProtoMessage() {}
 
 func (x *ModelUpdateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_types_proto_messages_proto_msgTypes[7]
+	mi := &file_internal_types_proto_messages_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -581,7 +633,7 @@ func (x *ModelUpdateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ModelUpdateRequest.ProtoReflect.Descriptor instead.
 func (*ModelUpdateRequest) Descriptor() ([]byte, []int) {
-	return file_internal_types_proto_messages_proto_rawDescGZIP(), []int{7}
+	return file_internal_types_proto_messages_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ModelUpdateRequest) GetClientId() string {
@@ -607,7 +659,7 @@ type UnregisterRequest struct {
 
 func (x *UnregisterRequest) Reset() {
 	*x = UnregisterRequest{}
-	mi := &file_internal_types_proto_messages_proto_msgTypes[8]
+	mi := &file_internal_types_proto_messages_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -619,7 +671,7 @@ func (x *UnregisterRequest) String() string {
 func (*UnregisterRequest) ProtoMessage() {}
 
 func (x *UnregisterRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_types_proto_messages_proto_msgTypes[8]
+	mi := &file_internal_types_proto_messages_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -632,7 +684,7 @@ func (x *UnregisterRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnregisterRequest.ProtoReflect.Descriptor instead.
 func (*UnregisterRequest) Descriptor() ([]byte, []int) {
-	return file_internal_types_proto_messages_proto_rawDescGZIP(), []int{8}
+	return file_internal_types_proto_messages_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *UnregisterRequest) GetClientId() string {
@@ -651,7 +703,7 @@ type ForceShutdownRequest struct {
 
 func (x *ForceShutdownRequest) Reset() {
 	*x = ForceShutdownRequest{}
-	mi := &file_internal_types_proto_messages_proto_msgTypes[9]
+	mi := &file_internal_types_proto_messages_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -663,7 +715,7 @@ func (x *ForceShutdownRequest) String() string {
 func (*ForceShutdownRequest) ProtoMessage() {}
 
 func (x *ForceShutdownRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_types_proto_messages_proto_msgTypes[9]
+	mi := &file_internal_types_proto_messages_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -676,7 +728,7 @@ func (x *ForceShutdownRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ForceShutdownRequest.ProtoReflect.Descriptor instead.
 func (*ForceShutdownRequest) Descriptor() ([]byte, []int) {
-	return file_internal_types_proto_messages_proto_rawDescGZIP(), []int{9}
+	return file_internal_types_proto_messages_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ForceShutdownRequest) GetClientId() string {
@@ -694,7 +746,7 @@ type Pong struct {
 
 func (x *Pong) Reset() {
 	*x = Pong{}
-	mi := &file_internal_types_proto_messages_proto_msgTypes[10]
+	mi := &file_internal_types_proto_messages_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -706,7 +758,7 @@ func (x *Pong) String() string {
 func (*Pong) ProtoMessage() {}
 
 func (x *Pong) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_types_proto_messages_proto_msgTypes[10]
+	mi := &file_internal_types_proto_messages_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -719,7 +771,7 @@ func (x *Pong) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Pong.ProtoReflect.Descriptor instead.
 func (*Pong) Descriptor() ([]byte, []int) {
-	return file_internal_types_proto_messages_proto_rawDescGZIP(), []int{10}
+	return file_internal_types_proto_messages_proto_rawDescGZIP(), []int{11}
 }
 
 type ClientClose struct {
@@ -731,7 +783,7 @@ type ClientClose struct {
 
 func (x *ClientClose) Reset() {
 	*x = ClientClose{}
-	mi := &file_internal_types_proto_messages_proto_msgTypes[11]
+	mi := &file_internal_types_proto_messages_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -743,7 +795,7 @@ func (x *ClientClose) String() string {
 func (*ClientClose) ProtoMessage() {}
 
 func (x *ClientClose) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_types_proto_messages_proto_msgTypes[11]
+	mi := &file_internal_types_proto_messages_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -756,7 +808,7 @@ func (x *ClientClose) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClientClose.ProtoReflect.Descriptor instead.
 func (*ClientClose) Descriptor() ([]byte, []int) {
-	return file_internal_types_proto_messages_proto_rawDescGZIP(), []int{11}
+	return file_internal_types_proto_messages_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ClientClose) GetRequestId() string {
@@ -780,7 +832,7 @@ type ServerMessage struct {
 
 func (x *ServerMessage) Reset() {
 	*x = ServerMessage{}
-	mi := &file_internal_types_proto_messages_proto_msgTypes[12]
+	mi := &file_internal_types_proto_messages_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -792,7 +844,7 @@ func (x *ServerMessage) String() string {
 func (*ServerMessage) ProtoMessage() {}
 
 func (x *ServerMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_types_proto_messages_proto_msgTypes[12]
+	mi := &file_internal_types_proto_messages_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -805,7 +857,7 @@ func (x *ServerMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServerMessage.ProtoReflect.Descriptor instead.
 func (*ServerMessage) Descriptor() ([]byte, []int) {
-	return file_internal_types_proto_messages_proto_rawDescGZIP(), []int{12}
+	return file_internal_types_proto_messages_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ServerMessage) GetMessage() isServerMessage_Message {
@@ -881,7 +933,7 @@ type ClientMessage struct {
 
 func (x *ClientMessage) Reset() {
 	*x = ClientMessage{}
-	mi := &file_internal_types_proto_messages_proto_msgTypes[13]
+	mi := &file_internal_types_proto_messages_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -893,7 +945,7 @@ func (x *ClientMessage) String() string {
 func (*ClientMessage) ProtoMessage() {}
 
 func (x *ClientMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_types_proto_messages_proto_msgTypes[13]
+	mi := &file_internal_types_proto_messages_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -906,7 +958,7 @@ func (x *ClientMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClientMessage.ProtoReflect.Descriptor instead.
 func (*ClientMessage) Descriptor() ([]byte, []int) {
-	return file_internal_types_proto_messages_proto_rawDescGZIP(), []int{13}
+	return file_internal_types_proto_messages_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ClientMessage) GetMessage() isClientMessage_Message {
@@ -1049,10 +1101,15 @@ const file_internal_types_proto_messages_proto_rawDesc = "" +
 	"\x04body\x18\x04 \x01(\fR\x04body\x12/\n" +
 	"\x04kind\x18\x05 \x01(\x0e2\x1b.synapse.types.ResponseKindR\x04kind\x12\x12\n" +
 	"\x04done\x18\x06 \x01(\bR\x04done\x12\x1c\n" +
-	"\ttimestamp\x18\a \x01(\x03R\ttimestamp\"]\n" +
+	"\ttimestamp\x18\a \x01(\x03R\ttimestamp\"e\n" +
+	"\x14ModelProcessingStats\x12\x19\n" +
+	"\bmodel_id\x18\x01 \x01(\tR\amodelId\x122\n" +
+	"\x15average_processing_ms\x18\x02 \x01(\x01R\x13averageProcessingMs\"n\n" +
 	"\tHeartbeat\x12\x1c\n" +
-	"\ttimestamp\x18\x01 \x01(\x03R\ttimestamp\x122\n" +
-	"\x15average_processing_ms\x18\x02 \x01(\x01R\x13averageProcessingMs\"c\n" +
+	"\ttimestamp\x18\x01 \x01(\x03R\ttimestamp\x12C\n" +
+	"\n" +
+	"processing\x18\x02 \x03(\v2#.synapse.types.ModelProcessingStatsR\n" +
+	"processing\"c\n" +
 	"\x12ModelUpdateRequest\x12\x1b\n" +
 	"\tclient_id\x18\x01 \x01(\tR\bclientId\x120\n" +
 	"\x06models\x18\x02 \x03(\v2\x18.synapse.types.ModelInfoR\x06models\"0\n" +
@@ -1097,7 +1154,7 @@ func file_internal_types_proto_messages_proto_rawDescGZIP() []byte {
 }
 
 var file_internal_types_proto_messages_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_internal_types_proto_messages_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_internal_types_proto_messages_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_internal_types_proto_messages_proto_goTypes = []any{
 	(ResponseKind)(0),            // 0: synapse.types.ResponseKind
 	(*ModelInfo)(nil),            // 1: synapse.types.ModelInfo
@@ -1106,14 +1163,15 @@ var file_internal_types_proto_messages_proto_goTypes = []any{
 	(*HeaderEntry)(nil),          // 4: synapse.types.HeaderEntry
 	(*ForwardRequest)(nil),       // 5: synapse.types.ForwardRequest
 	(*ForwardResponse)(nil),      // 6: synapse.types.ForwardResponse
-	(*Heartbeat)(nil),            // 7: synapse.types.Heartbeat
-	(*ModelUpdateRequest)(nil),   // 8: synapse.types.ModelUpdateRequest
-	(*UnregisterRequest)(nil),    // 9: synapse.types.UnregisterRequest
-	(*ForceShutdownRequest)(nil), // 10: synapse.types.ForceShutdownRequest
-	(*Pong)(nil),                 // 11: synapse.types.Pong
-	(*ClientClose)(nil),          // 12: synapse.types.ClientClose
-	(*ServerMessage)(nil),        // 13: synapse.types.ServerMessage
-	(*ClientMessage)(nil),        // 14: synapse.types.ClientMessage
+	(*ModelProcessingStats)(nil), // 7: synapse.types.ModelProcessingStats
+	(*Heartbeat)(nil),            // 8: synapse.types.Heartbeat
+	(*ModelUpdateRequest)(nil),   // 9: synapse.types.ModelUpdateRequest
+	(*UnregisterRequest)(nil),    // 10: synapse.types.UnregisterRequest
+	(*ForceShutdownRequest)(nil), // 11: synapse.types.ForceShutdownRequest
+	(*Pong)(nil),                 // 12: synapse.types.Pong
+	(*ClientClose)(nil),          // 13: synapse.types.ClientClose
+	(*ServerMessage)(nil),        // 14: synapse.types.ServerMessage
+	(*ClientMessage)(nil),        // 15: synapse.types.ClientMessage
 }
 var file_internal_types_proto_messages_proto_depIdxs = []int32{
 	1,  // 0: synapse.types.ModelsResponse.data:type_name -> synapse.types.ModelInfo
@@ -1121,21 +1179,22 @@ var file_internal_types_proto_messages_proto_depIdxs = []int32{
 	4,  // 2: synapse.types.ForwardRequest.header:type_name -> synapse.types.HeaderEntry
 	4,  // 3: synapse.types.ForwardResponse.header:type_name -> synapse.types.HeaderEntry
 	0,  // 4: synapse.types.ForwardResponse.kind:type_name -> synapse.types.ResponseKind
-	1,  // 5: synapse.types.ModelUpdateRequest.models:type_name -> synapse.types.ModelInfo
-	5,  // 6: synapse.types.ServerMessage.forward_request:type_name -> synapse.types.ForwardRequest
-	12, // 7: synapse.types.ServerMessage.client_close:type_name -> synapse.types.ClientClose
-	11, // 8: synapse.types.ServerMessage.pong:type_name -> synapse.types.Pong
-	3,  // 9: synapse.types.ClientMessage.registration:type_name -> synapse.types.ClientRegistration
-	6,  // 10: synapse.types.ClientMessage.forward_response:type_name -> synapse.types.ForwardResponse
-	7,  // 11: synapse.types.ClientMessage.heartbeat:type_name -> synapse.types.Heartbeat
-	8,  // 12: synapse.types.ClientMessage.model_update:type_name -> synapse.types.ModelUpdateRequest
-	9,  // 13: synapse.types.ClientMessage.unregister:type_name -> synapse.types.UnregisterRequest
-	10, // 14: synapse.types.ClientMessage.force_shutdown:type_name -> synapse.types.ForceShutdownRequest
-	15, // [15:15] is the sub-list for method output_type
-	15, // [15:15] is the sub-list for method input_type
-	15, // [15:15] is the sub-list for extension type_name
-	15, // [15:15] is the sub-list for extension extendee
-	0,  // [0:15] is the sub-list for field type_name
+	7,  // 5: synapse.types.Heartbeat.processing:type_name -> synapse.types.ModelProcessingStats
+	1,  // 6: synapse.types.ModelUpdateRequest.models:type_name -> synapse.types.ModelInfo
+	5,  // 7: synapse.types.ServerMessage.forward_request:type_name -> synapse.types.ForwardRequest
+	13, // 8: synapse.types.ServerMessage.client_close:type_name -> synapse.types.ClientClose
+	12, // 9: synapse.types.ServerMessage.pong:type_name -> synapse.types.Pong
+	3,  // 10: synapse.types.ClientMessage.registration:type_name -> synapse.types.ClientRegistration
+	6,  // 11: synapse.types.ClientMessage.forward_response:type_name -> synapse.types.ForwardResponse
+	8,  // 12: synapse.types.ClientMessage.heartbeat:type_name -> synapse.types.Heartbeat
+	9,  // 13: synapse.types.ClientMessage.model_update:type_name -> synapse.types.ModelUpdateRequest
+	10, // 14: synapse.types.ClientMessage.unregister:type_name -> synapse.types.UnregisterRequest
+	11, // 15: synapse.types.ClientMessage.force_shutdown:type_name -> synapse.types.ForceShutdownRequest
+	16, // [16:16] is the sub-list for method output_type
+	16, // [16:16] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_internal_types_proto_messages_proto_init() }
@@ -1143,12 +1202,12 @@ func file_internal_types_proto_messages_proto_init() {
 	if File_internal_types_proto_messages_proto != nil {
 		return
 	}
-	file_internal_types_proto_messages_proto_msgTypes[12].OneofWrappers = []any{
+	file_internal_types_proto_messages_proto_msgTypes[13].OneofWrappers = []any{
 		(*ServerMessage_ForwardRequest)(nil),
 		(*ServerMessage_ClientClose)(nil),
 		(*ServerMessage_Pong)(nil),
 	}
-	file_internal_types_proto_messages_proto_msgTypes[13].OneofWrappers = []any{
+	file_internal_types_proto_messages_proto_msgTypes[14].OneofWrappers = []any{
 		(*ClientMessage_Registration)(nil),
 		(*ClientMessage_ForwardResponse)(nil),
 		(*ClientMessage_Heartbeat)(nil),
@@ -1162,7 +1221,7 @@ func file_internal_types_proto_messages_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_internal_types_proto_messages_proto_rawDesc), len(file_internal_types_proto_messages_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   14,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

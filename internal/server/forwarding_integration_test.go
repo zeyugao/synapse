@@ -160,8 +160,85 @@ const pythonClientScript = `
 import argparse
 import concurrent.futures
 import json
+import sys
+import urllib.error
+import urllib.request
 
-from openai import OpenAI
+
+def build_url(base, path):
+    if base.endswith("/"):
+        base = base[:-1]
+    if not path.startswith("/"):
+        path = "/" + path
+    return base + path
+
+
+def create_request(url, payload, api_key, accept=None):
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
+    if accept:
+        headers["Accept"] = accept
+    data = json.dumps(payload).encode("utf-8")
+    return urllib.request.Request(url, data=data, headers=headers, method="POST")
+
+
+def read_streaming_response(response):
+    parts = []
+    for raw_line in response:
+        line = raw_line.decode("utf-8").rstrip("\r\n")
+        if not line or not line.startswith("data:"):
+            continue
+        payload = line[5:].lstrip()
+        if not payload or payload == "[DONE]":
+            if payload == "[DONE]":
+                break
+            continue
+        try:
+            data = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        for choice in data.get("choices", []):
+            delta = choice.get("delta") or {}
+            content = delta.get("content")
+            if isinstance(content, str):
+                parts.append(content)
+            elif isinstance(content, list):
+                for item in content:
+                    text = item.get("text")
+                    if text:
+                        parts.append(text)
+    return "".join(parts)
+
+
+def run_non_stream(base_url, api_key, model, prompt):
+    url = build_url(base_url, "/chat/completions")
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    request = create_request(url, payload, api_key)
+    with urllib.request.urlopen(request) as response:
+        body = response.read().decode("utf-8")
+    data = json.loads(body)
+    choices = data.get("choices") or []
+    if not choices:
+        return ""
+    message = choices[0].get("message") or {}
+    return message.get("content", "")
+
+
+def run_stream(base_url, api_key, model, prompt):
+    url = build_url(base_url, "/chat/completions")
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": True,
+    }
+    request = create_request(url, payload, api_key, accept="text/event-stream")
+    with urllib.request.urlopen(request) as response:
+        return read_streaming_response(response)
 
 
 def main():
@@ -173,47 +250,26 @@ def main():
     parser.add_argument("--stream-prompt", required=True)
     args = parser.parse_args()
 
-    client = OpenAI(base_url=args.base_url, api_key=args.api_key)
-
-    def run_non_stream():
-        response = client.chat.completions.create(
-            model=args.model,
-            messages=[{"role": "user", "content": args.non_stream_prompt}],
-        )
-        return {"type": "non_stream", "content": response.choices[0].message.content}
-
-    def run_stream():
-        text = ""
-        stream = client.chat.completions.create(
-            model=args.model,
-            messages=[{"role": "user", "content": args.stream_prompt}],
-            stream=True,
-        )
-        for chunk in stream:
-            delta = chunk.choices[0].delta
-            if delta and getattr(delta, "content", None):
-                part = delta.content
-                if isinstance(part, str):
-                    text += part
-                else:
-                    for item in part:
-                        payload = getattr(item, "text", None)
-                        if payload:
-                            text += payload
-        return {"type": "stream", "content": text}
-
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
         futures = [
-            executor.submit(run_non_stream),
-            executor.submit(run_stream),
+            executor.submit(run_non_stream, args.base_url, args.api_key, args.model, args.non_stream_prompt),
+            executor.submit(run_stream, args.base_url, args.api_key, args.model, args.stream_prompt),
         ]
-        results = [f.result() for f in futures]
+        results = [
+            {"type": "non_stream", "content": futures[0].result()},
+            {"type": "stream", "content": futures[1].result()},
+        ]
 
     print(json.dumps(results), flush=True)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except urllib.error.HTTPError as exc:
+        payload = exc.read().decode("utf-8", "ignore")
+        sys.stderr.write(f"HTTP error {exc.code}: {payload}\n")
+        raise
 `
 
 type fakeOpenAIBackend struct {

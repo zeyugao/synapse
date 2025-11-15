@@ -30,6 +30,11 @@ import (
 
 const processingEMAAlpha = 0.2
 
+type requestTiming struct {
+	start time.Time
+	model string
+}
+
 type Client struct {
 	BaseUrl         string
 	ServerURL       string
@@ -53,8 +58,8 @@ type Client struct {
 	connClosed      chan struct{} // Channel to signal connection closed
 	msgPool         sync.Pool
 	metricsMu       sync.Mutex
-	requestTimings  map[string]time.Time
-	avgProcessMs    float64
+	requestTimings  map[string]requestTiming
+	modelProcessMs  map[string]float64
 }
 
 func NewClient(baseUrl, serverURL string, version string, semver string) *Client {
@@ -69,7 +74,8 @@ func NewClient(baseUrl, serverURL string, version string, semver string) *Client
 		syncTicker:      time.NewTicker(30 * time.Second),
 		shutdownSignal:  make(chan struct{}),
 		connClosed:      make(chan struct{}),
-		requestTimings:  make(map[string]time.Time),
+		requestTimings:  make(map[string]requestTiming),
+		modelProcessMs:  make(map[string]float64),
 	}
 	client.msgPool = sync.Pool{
 		New: func() any {
@@ -203,11 +209,11 @@ func (c *Client) heartbeatLoop() {
 		}
 
 		heartbeat := c.getClientMessage()
-		avgMs := c.averageProcessingMillis()
+		stats := c.snapshotProcessingStats()
 		heartbeat.Message = &pb.ClientMessage_Heartbeat{
 			Heartbeat: &types.Heartbeat{
-				Timestamp:           time.Now().Unix(),
-				AverageProcessingMs: avgMs,
+				Timestamp:  time.Now().Unix(),
+				Processing: stats,
 			},
 		}
 		if err := c.writeProto(heartbeat); err != nil {
@@ -361,7 +367,7 @@ func readServerMessage(conn *websocket.Conn) (*types.ServerMessage, error) {
 
 func (c *Client) forwardRequest(req *types.ForwardRequest) {
 	c.trackRequest(true)
-	c.startRequestTimer(req.GetRequestId())
+	c.startRequestTimer(req.GetRequestId(), req.GetModel())
 	defer func() {
 		c.finishRequestTimer(req.GetRequestId())
 		c.trackRequest(false)
@@ -683,12 +689,15 @@ func (c *Client) trackRequest(start bool) {
 	}
 }
 
-func (c *Client) startRequestTimer(requestID string) {
+func (c *Client) startRequestTimer(requestID, model string) {
 	if requestID == "" {
 		return
 	}
 	c.metricsMu.Lock()
-	c.requestTimings[requestID] = time.Now()
+	c.requestTimings[requestID] = requestTiming{
+		start: time.Now(),
+		model: model,
+	}
 	c.metricsMu.Unlock()
 }
 
@@ -697,7 +706,7 @@ func (c *Client) finishRequestTimer(requestID string) {
 		return
 	}
 	c.metricsMu.Lock()
-	start, ok := c.requestTimings[requestID]
+	timing, ok := c.requestTimings[requestID]
 	if ok {
 		delete(c.requestTimings, requestID)
 	}
@@ -705,28 +714,45 @@ func (c *Client) finishRequestTimer(requestID string) {
 	if !ok {
 		return
 	}
-	c.recordProcessingDuration(time.Since(start))
+	c.recordProcessingDuration(time.Since(timing.start), timing.model)
 }
 
-func (c *Client) recordProcessingDuration(duration time.Duration) {
+func (c *Client) recordProcessingDuration(duration time.Duration, model string) {
+	if model == "" {
+		return
+	}
 	millis := float64(duration) / float64(time.Millisecond)
 	if millis < 0 {
 		millis = 0
 	}
 
 	c.metricsMu.Lock()
-	if c.avgProcessMs == 0 {
-		c.avgProcessMs = millis
+	prev := c.modelProcessMs[model]
+	if prev == 0 {
+		c.modelProcessMs[model] = millis
 	} else {
-		c.avgProcessMs = processingEMAAlpha*millis + (1-processingEMAAlpha)*c.avgProcessMs
+		c.modelProcessMs[model] = processingEMAAlpha*millis + (1-processingEMAAlpha)*prev
 	}
 	c.metricsMu.Unlock()
 }
 
-func (c *Client) averageProcessingMillis() float64 {
+func (c *Client) snapshotProcessingStats() []*types.ModelProcessingStats {
 	c.metricsMu.Lock()
 	defer c.metricsMu.Unlock()
-	return c.avgProcessMs
+	if len(c.modelProcessMs) == 0 {
+		return nil
+	}
+	stats := make([]*types.ModelProcessingStats, 0, len(c.modelProcessMs))
+	for model, avg := range c.modelProcessMs {
+		if avg <= 0 {
+			continue
+		}
+		stats = append(stats, &types.ModelProcessingStats{
+			ModelId:             model,
+			AverageProcessingMs: avg,
+		})
+	}
+	return stats
 }
 
 func (c *Client) waitForRequests() <-chan struct{} {

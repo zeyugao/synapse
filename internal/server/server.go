@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math"
 	"math/rand"
 	"net/http"
 	"os"
@@ -53,7 +52,8 @@ type Client struct {
 	models         []*types.ModelInfo
 	mu             sync.Mutex
 	activeRequests int64
-	avgProcessBits uint64
+	processingMu   sync.RWMutex
+	modelAverages  map[string]float64
 }
 
 func (c *Client) writeProto(msg proto.Message) error {
@@ -85,15 +85,39 @@ func (c *Client) loadActive() int64 {
 	return atomic.LoadInt64(&c.activeRequests)
 }
 
-func (c *Client) updateAverageProcessing(ms float64) {
-	if ms < 0 {
-		ms = 0
+func (c *Client) updateAverageProcessing(stats []*types.ModelProcessingStats) {
+	if len(stats) == 0 {
+		return
 	}
-	atomic.StoreUint64(&c.avgProcessBits, math.Float64bits(ms))
+	c.processingMu.Lock()
+	if c.modelAverages == nil {
+		c.modelAverages = make(map[string]float64)
+	}
+	for _, stat := range stats {
+		if stat == nil {
+			continue
+		}
+		modelID := stat.GetModelId()
+		if modelID == "" {
+			continue
+		}
+		avg := stat.GetAverageProcessingMs()
+		if avg <= 0 {
+			delete(c.modelAverages, modelID)
+			continue
+		}
+		c.modelAverages[modelID] = avg
+	}
+	c.processingMu.Unlock()
 }
 
-func (c *Client) averageProcessing() float64 {
-	return math.Float64frombits(atomic.LoadUint64(&c.avgProcessBits))
+func (c *Client) processingForModel(modelID string) float64 {
+	if modelID == "" {
+		return 0
+	}
+	c.processingMu.RLock()
+	defer c.processingMu.RUnlock()
+	return c.modelAverages[modelID]
 }
 
 func NewServer(apiAuthKey, wsAuthKey string, version string, semver string, clientBinaryPath string, abortOnClientVersionMismatch bool) *Server {
@@ -285,8 +309,9 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	client := &Client{
-		conn:   conn,
-		models: models,
+		conn:          conn,
+		models:        models,
+		modelAverages: make(map[string]float64),
 	}
 	s.clients[clientID] = client
 
@@ -326,7 +351,7 @@ func (s *Server) handleClientResponses(clientID string, client *Client) {
 			}
 		case *pb.ClientMessage_Heartbeat:
 			if payload.Heartbeat != nil {
-				client.updateAverageProcessing(payload.Heartbeat.GetAverageProcessingMs())
+				client.updateAverageProcessing(payload.Heartbeat.GetProcessing())
 			}
 			if err := client.writeRaw(s.pongFrame); err != nil {
 				log.Printf("Failed to send pong response: %v", err)
@@ -496,7 +521,7 @@ func (s *Server) handleAPIRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	bestClient, bestClientID := selectClientByMetrics(candidateClients, candidateClientIDs, tiedIndexes)
+	bestClient, bestClientID := selectClientByMetrics(candidateClients, candidateClientIDs, tiedIndexes, req.GetModel())
 	if bestClient == nil {
 		http.Error(w, "No available clients", http.StatusServiceUnavailable)
 		return
@@ -895,7 +920,7 @@ func cloneModelInfo(src *types.ModelInfo) *types.ModelInfo {
 	return cloned
 }
 
-func selectClientByMetrics(clients []*Client, ids []string, indexes []int) (*Client, string) {
+func selectClientByMetrics(clients []*Client, ids []string, indexes []int, model string) (*Client, string) {
 	if len(indexes) == 0 {
 		return nil, ""
 	}
@@ -908,7 +933,7 @@ func selectClientByMetrics(clients []*Client, ids []string, indexes []int) (*Cli
 	var sumAvg float64
 	var countAvg int
 	for _, idx := range indexes {
-		if avg := clients[idx].averageProcessing(); avg > 0 {
+		if avg := clients[idx].processingForModel(model); avg > 0 {
 			sumAvg += avg
 			countAvg++
 		}
@@ -927,7 +952,7 @@ func selectClientByMetrics(clients []*Client, ids []string, indexes []int) (*Cli
 	for i, idx := range indexes {
 		client := clients[idx]
 		loadWeight := float64(client.loadActive()) + 1
-		avg := client.averageProcessing()
+		avg := client.processingForModel(model)
 		if avg <= 0 {
 			avg = groupAvg
 		}

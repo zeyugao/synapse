@@ -12,6 +12,7 @@ type (
 	ClientRegistration   = pb.ClientRegistration
 	ForwardRequest       = pb.ForwardRequest
 	ForwardResponse      = pb.ForwardResponse
+	ModelProcessingStats = pb.ModelProcessingStats
 	ModelUpdateRequest   = pb.ModelUpdateRequest
 	UnregisterRequest    = pb.UnregisterRequest
 	ForceShutdownRequest = pb.ForceShutdownRequest
