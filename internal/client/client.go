@@ -363,18 +363,22 @@ func (c *Client) performSelfUpdate(downloadURL, targetVersion string) error {
 		return fmt.Errorf("failed to determine executable path: %w", err)
 	}
 
-	exeDir := filepath.Dir(exePath)
-	tmpFile, err := os.CreateTemp(exeDir, "synapse-client-update-*")
+	tmpFile, tmpPath, inplace, cleanupDir, err := c.prepareUpdateFile(exePath)
 	if err != nil {
-		return fmt.Errorf("failed to create temporary file for update: %w", err)
+		return fmt.Errorf("failed to prepare update file: %w", err)
 	}
 
-	tmpPath := tmpFile.Name()
+	removeArtifacts := true
 	defer func() {
 		if tmpFile != nil {
 			tmpFile.Close()
 		}
-		os.Remove(tmpPath)
+		if removeArtifacts {
+			os.Remove(tmpPath)
+			if cleanupDir != "" {
+				os.RemoveAll(cleanupDir)
+			}
+		}
 	}()
 
 	if _, err := io.Copy(tmpFile, resp.Body); err != nil {
@@ -389,14 +393,26 @@ func (c *Client) performSelfUpdate(downloadURL, targetVersion string) error {
 	}
 	tmpFile = nil
 
+	if !inplace {
+		removeArtifacts = false
+		log.Printf("Client updated to version %s in temporary location %s, restarting process", targetVersion, tmpPath)
+		return syscall.Exec(tmpPath, os.Args, os.Environ())
+	}
+
 	if err := c.backupExecutable(exePath); err != nil {
 		return fmt.Errorf("failed to backup current binary: %w", err)
 	}
 
 	if err := os.Rename(tmpPath, exePath); err != nil {
+		if os.IsPermission(err) {
+			removeArtifacts = false
+			log.Printf("Permission denied replacing %s. Running downloaded binary directly from %s", exePath, tmpPath)
+			return syscall.Exec(tmpPath, os.Args, os.Environ())
+		}
 		return fmt.Errorf("failed to replace binary: %w", err)
 	}
 
+	removeArtifacts = false
 	log.Printf("Client updated to version %s, restarting process", targetVersion)
 	return syscall.Exec(exePath, os.Args, os.Environ())
 }
@@ -428,6 +444,31 @@ func copyFile(src, dst string) error {
 		return err
 	}
 	return out.Sync()
+}
+
+func (c *Client) prepareUpdateFile(exePath string) (*os.File, string, bool, string, error) {
+	exeDir := filepath.Dir(exePath)
+	tmpFile, err := os.CreateTemp(exeDir, "synapse-client-update-*")
+	if err == nil {
+		return tmpFile, tmpFile.Name(), true, "", nil
+	}
+	if !os.IsPermission(err) && !errors.Is(err, syscall.EROFS) {
+		return nil, "", false, "", err
+	}
+	log.Printf("Executable directory %s not writable (%v), using temporary directory for update", exeDir, err)
+
+	fallbackDir, err := os.MkdirTemp("", "synapse-client-update-*")
+	if err != nil {
+		return nil, "", false, "", fmt.Errorf("failed to create fallback update directory: %w", err)
+	}
+
+	tmpPath := filepath.Join(fallbackDir, "synapse-client")
+	file, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	if err != nil {
+		os.RemoveAll(fallbackDir)
+		return nil, "", false, "", err
+	}
+	return file, tmpPath, false, fallbackDir, nil
 }
 
 func (c *Client) inferServerBaseURL() *url.URL {
