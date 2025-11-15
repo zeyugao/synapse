@@ -2,6 +2,10 @@
 
 Synapse is a lightweight, efficient reverse proxy system designed to unify access to multiple LLM (Large Language Model) API endpoints. It provides a centralized platform for model discovery and API forwarding, similar to FastChat's worker system but with improvements for local network deployments.
 
+## Changelog
+
+- **2025-11-15**: Added automatic client self-update. When a client reconnects and detects a server version mismatch, it downloads the server-provided client binary and restarts itself with the matching version.
+
 ## Features
 
 - **Unified Model Access**: Access multiple OpenAI-compatible API endpoints through a single entry point
