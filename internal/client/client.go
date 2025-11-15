@@ -713,22 +713,27 @@ func generateClientID() string {
 
 func (c *Client) reconnect() {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if c.closing {
+		c.mu.Unlock()
 		return
 	}
+	c.mu.Unlock()
 
-	c.setReconnecting(true)
-	defer func() {
-		c.setReconnecting(false)
-	}()
+	c.reconnMu.Lock()
+	if c.reconnecting {
+		c.reconnMu.Unlock()
+		return
+	}
+	c.reconnecting = true
+	c.reconnMu.Unlock()
+	defer c.setReconnecting(false)
 
-	// Close the current connection if it exists
+	c.mu.Lock()
 	if c.conn != nil {
 		c.conn.Close()
 		c.conn = nil
 	}
+	c.mu.Unlock()
 
 	retryWait := 1 * time.Second
 	maxRetryWait := 30 * time.Second
