@@ -40,6 +40,7 @@ func main() {
 		return
 	}
 
+	log.Printf("Synapse Server Version: %s", version)
 	server := server.NewServer(*apiAuthKey, *wsAuthKey, version, *clientBinary)
 	log.Printf("Starting server on %s:%s", *host, *port)
 	if err := server.Start(*host, *port); err != nil {

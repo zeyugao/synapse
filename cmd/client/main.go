@@ -36,6 +36,7 @@ func main() {
 		return
 	}
 
+	log.Printf("Synapse Client Version: %s", version)
 	client := client.NewClient(*baseURL, *serverURL, version)
 	client.WSAuthKey = *wsAuthKey
 	client.ApiKey = *apiKey
