@@ -72,7 +72,11 @@ func TestForwardingIntegrationMatchesOpenAIClient(t *testing.T) {
 		"--non-stream-prompt", nonStreamPrompt,
 		"--stream-prompt", streamPrompt,
 	)
-	cmd.Env = append(os.Environ(), "PYTHONUNBUFFERED=1")
+	cmd.Env = append(os.Environ(),
+		"PYTHONUNBUFFERED=1",
+		"NO_PROXY=127.0.0.1,localhost",
+		"no_proxy=127.0.0.1,localhost",
+	)
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		t.Fatalf("python client timed out: %v", ctx.Err())

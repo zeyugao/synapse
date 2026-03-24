@@ -9,6 +9,7 @@ message ModelInfo {
   string object = 2;
   int64 created = 3;
   string owned_by = 4;
+  bytes raw_json = 5;
 }
 
 message ModelsResponse {

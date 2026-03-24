@@ -76,6 +76,7 @@ type ModelInfo struct {
 	Object        string                 `protobuf:"bytes,2,opt,name=object,proto3" json:"object,omitempty"`
 	Created       int64                  `protobuf:"varint,3,opt,name=created,proto3" json:"created,omitempty"`
 	OwnedBy       string                 `protobuf:"bytes,4,opt,name=owned_by,json=ownedBy,proto3" json:"owned_by,omitempty"`
+	RawJson       []byte                 `protobuf:"bytes,5,opt,name=raw_json,json=rawJson,proto3" json:"raw_json,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -136,6 +137,13 @@ func (x *ModelInfo) GetOwnedBy() string {
 		return x.OwnedBy
 	}
 	return ""
+}
+
+func (x *ModelInfo) GetRawJson() []byte {
+	if x != nil {
+		return x.RawJson
+	}
+	return nil
 }
 
 type ModelsResponse struct {
@@ -1126,12 +1134,13 @@ var File_internal_types_proto_messages_proto protoreflect.FileDescriptor
 
 const file_internal_types_proto_messages_proto_rawDesc = "" +
 	"\n" +
-	"#internal/types/proto/messages.proto\x12\rsynapse.types\"h\n" +
+	"#internal/types/proto/messages.proto\x12\rsynapse.types\"\x83\x01\n" +
 	"\tModelInfo\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
 	"\x06object\x18\x02 \x01(\tR\x06object\x12\x18\n" +
 	"\acreated\x18\x03 \x01(\x03R\acreated\x12\x19\n" +
-	"\bowned_by\x18\x04 \x01(\tR\aownedBy\"V\n" +
+	"\bowned_by\x18\x04 \x01(\tR\aownedBy\x12\x19\n" +
+	"\braw_json\x18\x05 \x01(\fR\arawJson\"V\n" +
 	"\x0eModelsResponse\x12\x16\n" +
 	"\x06object\x18\x01 \x01(\tR\x06object\x12,\n" +
 	"\x04data\x18\x02 \x03(\v2\x18.synapse.types.ModelInfoR\x04data\"\x83\x01\n" +

@@ -112,19 +112,17 @@ func (c *Client) fetchModels(silent bool) ([]*types.ModelInfo, error) {
 	}
 	defer resp.Body.Close()
 
-	var modelsResp types.ModelsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&modelsResp); err != nil {
+	models, err := decodeModelsResponse(resp.Body)
+	if err != nil {
 		if !silent {
 			log.Printf("Failed to parse model response: %v", err)
 		}
 		return nil, err
 	}
 
-	cloned := cloneModelInfos(modelsResp.GetData())
-
 	if !silent {
-		log.Printf("Got %d models", len(cloned))
-		for _, model := range cloned {
+		log.Printf("Got %d models", len(models))
+		for _, model := range models {
 			if model == nil {
 				continue
 			}
@@ -132,7 +130,66 @@ func (c *Client) fetchModels(silent bool) ([]*types.ModelInfo, error) {
 		}
 	}
 
-	return cloned, nil
+	return models, nil
+}
+
+func decodeModelsResponse(r io.Reader) ([]*types.ModelInfo, error) {
+	var modelsResp struct {
+		Data []json.RawMessage `json:"data"`
+	}
+	if err := json.NewDecoder(r).Decode(&modelsResp); err != nil {
+		return nil, err
+	}
+
+	if len(modelsResp.Data) == 0 {
+		return nil, nil
+	}
+
+	models := make([]*types.ModelInfo, 0, len(modelsResp.Data))
+	for _, rawModel := range modelsResp.Data {
+		model, err := decodeModelInfo(rawModel)
+		if err != nil {
+			return nil, err
+		}
+		models = append(models, model)
+	}
+
+	return models, nil
+}
+
+func decodeModelInfo(rawModel json.RawMessage) (*types.ModelInfo, error) {
+	trimmed := bytes.TrimSpace(rawModel)
+	if bytes.Equal(trimmed, []byte("null")) {
+		return nil, nil
+	}
+
+	var model types.ModelInfo
+	if err := json.Unmarshal(trimmed, &model); err != nil {
+		return nil, err
+	}
+
+	payload, err := decodeJSONObject(trimmed)
+	if err != nil {
+		return nil, err
+	}
+
+	normalized, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	model.RawJson = normalized
+	return &model, nil
+}
+
+func decodeJSONObject(raw []byte) (map[string]any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+
+	var payload map[string]any
+	if err := decoder.Decode(&payload); err != nil {
+		return nil, err
+	}
+	return payload, nil
 }
 
 func (c *Client) Connect() error {

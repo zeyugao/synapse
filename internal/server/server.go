@@ -821,51 +821,48 @@ func (s *Server) getModelsCache() []byte {
 }
 
 func (s *Server) buildModelsCacheLocked() []byte {
-	type modelEntry struct {
-		*types.ModelInfo
-		ClientCount int `json:"client_count"`
+	type modelGroup struct {
+		models    []*types.ModelInfo
+		clientIDs map[string]struct{}
 	}
 
-	modelMap := make(map[string]*modelEntry)
-	for _, client := range s.clients {
+	modelGroups := make(map[string]*modelGroup)
+	for clientID, client := range s.clients {
 		for _, model := range client.models {
 			if model == nil {
 				continue
 			}
+
 			modelID := model.GetId()
-			entry, exists := modelMap[modelID]
-			if !exists {
-				entry = &modelEntry{
-					ModelInfo:   cloneModelInfo(model),
-					ClientCount: len(s.modelClients[modelID]),
+			group := modelGroups[modelID]
+			if group == nil {
+				group = &modelGroup{
+					clientIDs: make(map[string]struct{}),
 				}
-				modelMap[modelID] = entry
-			} else {
-				entry.ClientCount = len(s.modelClients[modelID])
+				modelGroups[modelID] = group
 			}
+
+			group.models = append(group.models, model)
+			group.clientIDs[clientID] = struct{}{}
 		}
 	}
 
-	entries := make([]modelEntry, 0, len(modelMap))
-	for _, entry := range modelMap {
-		entries = append(entries, *entry)
+	entries := make([]map[string]any, 0, len(modelGroups))
+	for modelID, group := range modelGroups {
+		entry := mergedModelPayload(group.models, modelID)
+		entry["client_count"] = len(group.clientIDs)
+		entries = append(entries, entry)
 	}
 
 	sort.Slice(entries, func(i, j int) bool {
-		left := ""
-		right := ""
-		if entries[i].ModelInfo != nil {
-			left = entries[i].ModelInfo.GetId()
-		}
-		if entries[j].ModelInfo != nil {
-			right = entries[j].ModelInfo.GetId()
-		}
+		left, _ := entries[i]["id"].(string)
+		right, _ := entries[j]["id"].(string)
 		return left < right
 	})
 
 	response := struct {
-		Object string       `json:"object"`
-		Data   []modelEntry `json:"data"`
+		Object string           `json:"object"`
+		Data   []map[string]any `json:"data"`
 	}{
 		Object: "list",
 		Data:   entries,
