@@ -584,18 +584,27 @@ func (s *Server) handleAPIRequest(w http.ResponseWriter, r *http.Request) {
 				w.Write(resp.GetBody())
 			}
 		} else {
-			// Streaming response
-			w.Header().Set("Content-Type", "text/event-stream")
-			w.Header().Set("Cache-Control", "no-cache")
-			w.Header().Set("Connection", "keep-alive")
+			if w.Header().Get("Content-Type") == "" {
+				w.Header().Set("Content-Type", "text/event-stream")
+			}
+			w.Header().Del("Content-Length")
+			if resp.GetStatusCode() != 0 {
+				w.WriteHeader(int(resp.GetStatusCode()))
+			}
 			flusher, _ := w.(http.Flusher)
 
-			// Write the first chunk
-			if err := writeSSEChunk(w, resp.GetBody()); err != nil {
-				log.Printf("Failed to write SSE chunk: %v", err)
+			if len(resp.GetBody()) > 0 {
+				if _, err := w.Write(resp.GetBody()); err != nil {
+					log.Printf("Failed to write stream chunk: %v", err)
+					return
+				}
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
+			if resp.GetDone() {
 				return
 			}
-			flusher.Flush()
 
 			// Continue processing subsequent chunks
 			for {
@@ -604,18 +613,17 @@ func (s *Server) handleAPIRequest(w http.ResponseWriter, r *http.Request) {
 					if !ok || chunk == nil {
 						return
 					}
-					if chunk.GetDone() {
-						if err := writeSSEChunk(w, []byte("[DONE]")); err != nil {
-							log.Printf("Failed to write SSE DONE chunk: %v", err)
-						}
-						flusher.Flush()
-						return
-					} else {
-						if err := writeSSEChunk(w, chunk.GetBody()); err != nil {
-							log.Printf("Failed to write SSE chunk: %v", err)
+					if len(chunk.GetBody()) > 0 {
+						if _, err := w.Write(chunk.GetBody()); err != nil {
+							log.Printf("Failed to write stream chunk: %v", err)
 							return
 						}
+					}
+					if flusher != nil {
 						flusher.Flush()
+					}
+					if chunk.GetDone() {
+						return
 					}
 				case <-r.Context().Done():
 					// Send client close request
@@ -874,19 +882,6 @@ func (s *Server) buildModelsCacheLocked() []byte {
 		return []byte(`{"object":"list","data":[]}`)
 	}
 	return data
-}
-
-func writeSSEChunk(w http.ResponseWriter, payload []byte) error {
-	if _, err := w.Write([]byte("data: ")); err != nil {
-		return err
-	}
-	if len(payload) > 0 {
-		if _, err := w.Write(payload); err != nil {
-			return err
-		}
-	}
-	_, err := w.Write([]byte("\n\n"))
-	return err
 }
 
 func cloneModelInfos(src []*types.ModelInfo) []*types.ModelInfo {

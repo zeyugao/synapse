@@ -1,7 +1,6 @@
 package client
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -29,7 +28,10 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const processingEMAAlpha = 0.2
+const (
+	processingEMAAlpha   = 0.2
+	streamReadBufferSize = 32 * 1024
+)
 
 type requestTiming struct {
 	start time.Time
@@ -645,7 +647,7 @@ func (c *Client) forwardRequest(req *types.ForwardRequest) {
 	defer resp.Body.Close()
 
 	if mediaType, _, err := mime.ParseMediaType(resp.Header.Get("Content-Type")); err == nil && mediaType == "text/event-stream" {
-		c.handleStreamResponse(resp.Body, req.GetRequestId(), ctx)
+		c.handleStreamResponse(resp, req.GetRequestId(), ctx)
 	} else {
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
@@ -678,50 +680,71 @@ func (c *Client) forwardRequest(req *types.ForwardRequest) {
 	}
 }
 
-func (c *Client) handleStreamResponse(reader io.Reader, requestID string, ctx context.Context) {
-	scanner := bufio.NewScanner(reader)
-	var buffer bytes.Buffer
+func (c *Client) handleStreamResponse(resp *http.Response, requestID string, ctx context.Context) {
+	reader := resp.Body
+	firstChunk := true
+	header := types.HTTPHeaderToProto(resp.Header.Clone())
+	buf := make([]byte, streamReadBufferSize)
 
-	for scanner.Scan() {
+	sendChunk := func(body []byte, done bool) error {
+		forwardResp := &types.ForwardResponse{
+			RequestId: requestID,
+			Kind:      types.ResponseKindStream,
+			Body:      body,
+			Done:      done,
+		}
+		if firstChunk {
+			forwardResp.StatusCode = int32(resp.StatusCode)
+			forwardResp.Header = header
+			firstChunk = false
+		}
+		return c.sendForwardResponse(forwardResp)
+	}
+
+	for {
 		select {
 		case <-ctx.Done():
 			log.Printf("Request %s has been cancelled", requestID)
 			return
 		default:
-			line := scanner.Bytes()
-			if bytes.HasPrefix(line, []byte("data: ")) {
-				content := bytes.TrimSpace(line[6:])
-				if bytes.Equal(content, []byte("[DONE]")) {
-					if err := c.sendForwardResponse(&types.ForwardResponse{
-						RequestId:  requestID,
-						Kind:       types.ResponseKindStream,
-						Done:       true,
-						StatusCode: int32(http.StatusOK),
-					}); err != nil {
-						log.Printf("Failed to send stream end marker: %v", err)
-					}
-					return
-				}
+		}
 
-				buffer.Write(content)
+		n, err := reader.Read(buf)
+		if n > 0 {
+			chunkData := append([]byte(nil), buf[:n]...)
+			done := errors.Is(err, io.EOF)
+			if err := sendChunk(chunkData, done); err != nil {
+				log.Printf("Failed to send stream data chunk: %v", err)
+				return
 			}
-			// Send a chunk of data when an empty line is encountered
-			if len(line) == 0 {
-				if buffer.Len() > 0 {
-					chunkData := append([]byte(nil), buffer.Bytes()...)
-					if err := c.sendForwardResponse(&types.ForwardResponse{
-						RequestId:  requestID,
-						Kind:       types.ResponseKindStream,
-						StatusCode: int32(http.StatusOK),
-						Body:       chunkData,
-					}); err != nil {
-						log.Printf("Failed to send stream data chunk: %v", err)
-						return
-					}
-					buffer.Reset()
-				}
+			if done {
+				return
 			}
 		}
+
+		if err == nil {
+			continue
+		}
+
+		if errors.Is(err, io.EOF) {
+			if firstChunk {
+				if err := sendChunk(nil, true); err != nil {
+					log.Printf("Failed to send empty stream end marker: %v", err)
+				}
+			}
+			return
+		}
+
+		if ctx.Err() != nil {
+			log.Printf("Request %s has been cancelled", requestID)
+			return
+		}
+
+		log.Printf("Failed to read stream response body for request %s: %v", requestID, err)
+		if err := sendChunk(nil, true); err != nil {
+			log.Printf("Failed to send stream end marker after read error: %v", err)
+		}
+		return
 	}
 }
 

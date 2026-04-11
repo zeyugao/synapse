@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -111,6 +112,76 @@ func TestForwardingIntegrationMatchesOpenAIClient(t *testing.T) {
 	}
 	if gotStream != expectedStream {
 		t.Fatalf("stream mismatch: got %q want %q", gotStream, expectedStream)
+	}
+}
+
+func TestForwardingIntegrationPreservesRawSSEBytes(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	backend := newFakeOpenAIBackend(t)
+	defer backend.Close()
+
+	httpBaseURL, serverAPIKey, shutdown := startConnectedSynapseClient(t, backend)
+	defer shutdown()
+
+	resp, body := readStreamingBody(t, httpBaseURL, serverAPIKey, backend.modelID, rawSSEPrompt)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status code: got %d want %d", resp.StatusCode, http.StatusOK)
+	}
+	if contentType := resp.Header.Get("Content-Type"); !strings.HasPrefix(contentType, "text/event-stream") {
+		t.Fatalf("unexpected content type: got %q", contentType)
+	}
+
+	expected := backend.specialStreamBody(rawSSEPrompt)
+	if !bytes.Equal(body, expected) {
+		t.Fatalf("raw stream mismatch:\n got: %q\nwant: %q", string(body), string(expected))
+	}
+}
+
+func TestForwardingIntegrationSupportsLargeStreamingChunks(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	backend := newFakeOpenAIBackend(t)
+	defer backend.Close()
+
+	httpBaseURL, serverAPIKey, shutdown := startConnectedSynapseClient(t, backend)
+	defer shutdown()
+
+	resp, body := readStreamingBody(t, httpBaseURL, serverAPIKey, backend.modelID, largeStreamPrompt)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status code: got %d want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	expected := backend.specialStreamBody(largeStreamPrompt)
+	if !bytes.Equal(body, expected) {
+		t.Fatalf("large stream mismatch: got %d bytes want %d bytes", len(body), len(expected))
+	}
+}
+
+func TestForwardingIntegrationHandlesEmptyStream(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	backend := newFakeOpenAIBackend(t)
+	defer backend.Close()
+
+	httpBaseURL, serverAPIKey, shutdown := startConnectedSynapseClient(t, backend)
+	defer shutdown()
+
+	resp, body := readStreamingBody(t, httpBaseURL, serverAPIKey, backend.modelID, emptyStreamPrompt)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status code: got %d want %d", resp.StatusCode, http.StatusOK)
+	}
+	if len(body) != 0 {
+		t.Fatalf("expected empty stream body, got %q", string(body))
 	}
 }
 
@@ -387,6 +458,10 @@ func (f *fakeOpenAIBackend) handleChatCompletion(w http.ResponseWriter, r *http.
 	responseText := f.ExpectedForPrompt(prompt)
 
 	if req.Stream {
+		if rawBody, ok := f.specialStreamBodyForPrompt(prompt); ok {
+			f.streamRawResponse(w, rawBody)
+			return
+		}
 		f.streamResponse(w, req.Model, responseText)
 		return
 	}
@@ -461,6 +536,46 @@ func (f *fakeOpenAIBackend) streamResponse(w http.ResponseWriter, model, content
 	flusher.Flush()
 }
 
+func (f *fakeOpenAIBackend) streamRawResponse(w http.ResponseWriter, body []byte) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		f.t.Fatal("response writer does not support flushing")
+	}
+
+	if len(body) > 0 {
+		if _, err := w.Write(body); err != nil {
+			f.t.Fatalf("failed to write raw stream body: %v", err)
+		}
+	}
+	flusher.Flush()
+}
+
+func (f *fakeOpenAIBackend) specialStreamBody(prompt string) []byte {
+	f.t.Helper()
+
+	body, ok := f.specialStreamBodyForPrompt(prompt)
+	if !ok {
+		f.t.Fatalf("no special stream configured for prompt %q", prompt)
+	}
+	return append([]byte(nil), body...)
+}
+
+func (f *fakeOpenAIBackend) specialStreamBodyForPrompt(prompt string) ([]byte, bool) {
+	switch prompt {
+	case rawSSEPrompt:
+		return []byte(": keep-alive\nid: evt-1\nevent: update\ndata: first line\ndata: second line\n\nid: evt-2\ndata: [DONE]\n\n"), true
+	case largeStreamPrompt:
+		return []byte("data: " + strings.Repeat("x", 70*1024) + "\n\n"), true
+	case emptyStreamPrompt:
+		return nil, true
+	default:
+		return nil, false
+	}
+}
+
 func chunkContent(text string, size int) []string {
 	if size <= 0 {
 		size = 4
@@ -500,3 +615,80 @@ func waitForCondition(timeout time.Duration, fn func() bool) bool {
 	}
 	return false
 }
+
+func startConnectedSynapseClient(t *testing.T, backend *fakeOpenAIBackend) (httpBaseURL, serverAPIKey string, shutdown func()) {
+	t.Helper()
+
+	serverAPIKey = "synapse-server-api-key"
+	srv := NewServer(serverAPIKey, "", "test-version", "")
+
+	httpBaseURL, wsURL, shutdownServer := startSynapseHTTPServer(t, srv)
+
+	client := synapseclient.NewClient(backend.BaseURL()+"/v1", wsURL, "test-version")
+	client.ApiKey = backend.apiKey
+	if err := client.Connect(); err != nil {
+		shutdownServer()
+		t.Fatalf("failed to start synapse client: %v", err)
+	}
+
+	if !waitForCondition(5*time.Second, func() bool {
+		srv.mu.RLock()
+		defer srv.mu.RUnlock()
+		clients := srv.modelClients[backend.modelID]
+		return len(clients) > 0
+	}) {
+		client.Shutdown()
+		client.Close()
+		shutdownServer()
+		t.Fatalf("model %q was never registered with the server", backend.modelID)
+	}
+
+	return httpBaseURL, serverAPIKey, func() {
+		client.Shutdown()
+		client.Close()
+		shutdownServer()
+	}
+}
+
+func readStreamingBody(t *testing.T, httpBaseURL, apiKey, model, prompt string) (*http.Response, []byte) {
+	t.Helper()
+
+	payload := map[string]any{
+		"model":    model,
+		"messages": []map[string]string{{"role": "user", "content": prompt}},
+		"stream":   true,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("failed to marshal request: %v", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, httpBaseURL+"/v1/chat/completions", bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+	req.Header.Set("Accept", "text/event-stream")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("stream request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("failed to read streaming body: %v", err)
+	}
+
+	resp.Body = io.NopCloser(bytes.NewReader(body))
+	return resp, body
+}
+
+const (
+	rawSSEPrompt      = "raw-sse"
+	largeStreamPrompt = "large-stream"
+	emptyStreamPrompt = "empty-stream"
+)
