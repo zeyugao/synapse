@@ -27,24 +27,25 @@ const responseChannelBuffer = 8
 
 type Server struct {
 	clients          map[string]*Client
-	modelClients     map[string][]string // model -> []clientID
+	modelClients     map[string]map[string][]string // group -> model -> []clientKey
 	mu               sync.RWMutex
 	upgrader         websocket.Upgrader
 	pendingRequests  map[string]chan *types.ForwardResponse
 	reqMu            sync.RWMutex
-	apiAuthKey       string
-	wsAuthKey        string
-	clientRequests   map[string]map[string]struct{} // clientID -> set of requestIDs
+	authConfig       *authConfig
+	clientRequests   map[string]map[string]struct{} // clientKey -> set of requestIDs
 	version          string
 	clientBinaryPath string
 	clientMsgPool    sync.Pool
 	serverMsgPool    sync.Pool
 	pongFrame        []byte
-	modelsCache      []byte
-	modelsCacheDirty bool
+	modelsCache      map[string][]byte
+	modelsCacheDirty map[string]bool
 }
 
 type Client struct {
+	id             string
+	groupName      string
 	conn           *websocket.Conn
 	models         []*types.ModelInfo
 	mu             sync.Mutex
@@ -118,13 +119,24 @@ func (c *Client) processingForModel(modelID string) float64 {
 }
 
 func NewServer(apiAuthKey, wsAuthKey string, version string, clientBinaryPath string) *Server {
+	return newServer(newLegacyAuthConfig(apiAuthKey, wsAuthKey), version, clientBinaryPath)
+}
+
+func NewServerWithConfig(cfg *Config, version string, clientBinaryPath string) (*Server, error) {
+	authConfig, err := newAuthConfigFromConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return newServer(authConfig, version, clientBinaryPath), nil
+}
+
+func newServer(authConfig *authConfig, version string, clientBinaryPath string) *Server {
 	server := &Server{
 		clients:         make(map[string]*Client),
-		modelClients:    make(map[string][]string),
+		modelClients:    make(map[string]map[string][]string),
 		pendingRequests: make(map[string]chan *types.ForwardResponse),
 		clientRequests:  make(map[string]map[string]struct{}),
-		apiAuthKey:      apiAuthKey,
-		wsAuthKey:       wsAuthKey,
+		authConfig:      authConfig,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				return true
@@ -132,7 +144,13 @@ func NewServer(apiAuthKey, wsAuthKey string, version string, clientBinaryPath st
 		},
 		version:          version,
 		clientBinaryPath: clientBinaryPath,
-		modelsCacheDirty: true,
+		modelsCache:      make(map[string][]byte),
+		modelsCacheDirty: make(map[string]bool),
+	}
+
+	for _, groupName := range authConfig.groupNames {
+		server.modelClients[groupName] = make(map[string][]string)
+		server.modelsCacheDirty[groupName] = true
 	}
 
 	server.clientMsgPool = sync.Pool{
@@ -156,6 +174,10 @@ func NewServer(apiAuthKey, wsAuthKey string, version string, clientBinaryPath st
 	server.pongFrame = frame
 
 	return server
+}
+
+func makeClientKey(groupName, clientID string) string {
+	return groupName + "\x00" + clientID
 }
 
 func generateRequestID() string {
@@ -186,14 +208,11 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		clientIP = realIP
 	}
 
-	// Check WebSocket authentication
-	if s.wsAuthKey != "" {
-		authKey := r.URL.Query().Get("ws_auth_key")
-		if authKey != s.wsAuthKey {
-			log.Printf("WebSocket authentication failed from %s", clientIP)
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
+	groupName, authorized := s.authConfig.matchWebSocketGroup(r.URL.Query().Get("ws_auth_key"))
+	if !authorized {
+		log.Printf("WebSocket authentication failed from %s", clientIP)
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
 	}
 
 	conn, err := s.upgrader.Upgrade(w, r, nil)
@@ -240,30 +259,37 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	models := cloneModelInfos(registration.GetModels())
-	log.Printf("New client connected: %s, registered models: %d", clientID, len(models))
+	clientKey := makeClientKey(groupName, clientID)
+	log.Printf("New client connected: %s (group=%s), registered models: %d", clientID, groupName, len(models))
 
 	s.mu.Lock()
 	client := &Client{
+		id:            clientID,
+		groupName:     groupName,
 		conn:          conn,
 		models:        models,
 		modelAverages: make(map[string]float64),
 	}
-	s.clients[clientID] = client
+	s.clients[clientKey] = client
 
 	// Update model to client mapping
+	if s.modelClients[groupName] == nil {
+		s.modelClients[groupName] = make(map[string][]string)
+	}
 	for _, model := range models {
 		if model == nil {
 			continue
 		}
-		s.modelClients[model.GetId()] = append(s.modelClients[model.GetId()], clientID)
+		modelID := model.GetId()
+		s.modelClients[groupName][modelID] = append(s.modelClients[groupName][modelID], clientKey)
 	}
-	s.modelsCacheDirty = true
+	s.modelsCacheDirty[groupName] = true
 	s.mu.Unlock()
 
 	s.putClientMessage(initialMsg)
 
 	// Add goroutine for handling responses
-	go s.handleClientResponses(clientID, client)
+	go s.handleClientResponses(clientKey, client)
 }
 
 func (s *Server) notifyClientUpdate(conn *websocket.Conn, r *http.Request) {
@@ -329,16 +355,16 @@ func (s *Server) buildClientDownloadURL(r *http.Request) string {
 	return fmt.Sprintf("%s://%s/getclient", protoScheme, host)
 }
 
-func (s *Server) handleClientResponses(clientID string, client *Client) {
+func (s *Server) handleClientResponses(clientKey string, client *Client) {
 	defer func() {
 		client.conn.Close()
-		s.unregisterClient(clientID)
+		s.unregisterClient(clientKey)
 	}()
 
 	for {
 		msg, err := s.readClientMessage(client.conn)
 		if err != nil {
-			log.Printf("Failed to read client %s message: %v", clientID, err)
+			log.Printf("Failed to read client %s message: %v", client.id, err)
 			return
 		}
 
@@ -356,18 +382,18 @@ func (s *Server) handleClientResponses(clientID string, client *Client) {
 			}
 		case *pb.ClientMessage_ModelUpdate:
 			if payload.ModelUpdate != nil {
-				s.handleModelUpdate(payload.ModelUpdate)
+				s.handleModelUpdate(clientKey, payload.ModelUpdate)
 			}
 		case *pb.ClientMessage_Unregister:
 			if payload.Unregister != nil {
 				log.Printf("Received unregister request from client %s", payload.Unregister.GetClientId())
-				s.unregisterClient(payload.Unregister.GetClientId())
+				s.unregisterClient(clientKey)
 				s.putClientMessage(msg)
 				return
 			}
 		case *pb.ClientMessage_ForceShutdown:
 			if payload.ForceShutdown != nil {
-				s.handleForceShutdown(payload.ForceShutdown)
+				s.handleForceShutdown(clientKey, payload.ForceShutdown)
 			}
 		default:
 			log.Printf("Unknown client message type: %T", payload)
@@ -408,8 +434,8 @@ func (s *Server) handleForwardResponse(resp *types.ForwardResponse) {
 	}
 }
 
-func (s *Server) handleModels(w http.ResponseWriter, _ *http.Request) {
-	cache := s.getModelsCache()
+func (s *Server) handleModels(w http.ResponseWriter, groupName string) {
+	cache := s.getModelsCache(groupName)
 	w.Header().Set("Content-Type", "application/json")
 	if _, err := w.Write(cache); err != nil {
 		log.Printf("Failed to write models response: %v", err)
@@ -417,13 +443,10 @@ func (s *Server) handleModels(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) handleAPIRequest(w http.ResponseWriter, r *http.Request) {
-	// Check API authentication
-	if s.apiAuthKey != "" {
-		authHeader := r.Header.Get("Authorization")
-		if authHeader != "Bearer "+s.apiAuthKey {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
-			return
-		}
+	groupName, err := s.authConfig.matchAPIGroup(r.Header)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
 	}
 
 	path := r.URL.Path
@@ -433,7 +456,7 @@ func (s *Server) handleAPIRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if path == "/models" {
-		s.handleModels(w, r)
+		s.handleModels(w, groupName)
 		return
 	}
 
@@ -475,16 +498,16 @@ func (s *Server) handleAPIRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Select client based on model and load balancing
 	s.mu.RLock()
-	clientIDsForModel, modelSupported := s.modelClients[req.Model]
+	clientIDsForModel, modelSupported := s.modelClients[groupName][req.Model]
 
 	var candidateClients []*Client
-	var candidateClientIDs []string
+	var candidateClientKeys []string
 
 	if modelSupported && len(clientIDsForModel) > 0 {
-		for _, cid := range clientIDsForModel {
-			if c, exists := s.clients[cid]; exists {
+		for _, clientKey := range clientIDsForModel {
+			if c, exists := s.clients[clientKey]; exists {
 				candidateClients = append(candidateClients, c)
-				candidateClientIDs = append(candidateClientIDs, cid)
+				candidateClientKeys = append(candidateClientKeys, clientKey)
 			}
 		}
 	}
@@ -519,34 +542,33 @@ func (s *Server) handleAPIRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	bestClient, bestClientID := selectClientByMetrics(candidateClients, candidateClientIDs, tiedIndexes, req.GetModel())
+	bestClient, bestClientKey := selectClientByMetrics(candidateClients, candidateClientKeys, tiedIndexes, req.GetModel())
 	if bestClient == nil {
 		http.Error(w, "No available clients", http.StatusServiceUnavailable)
 		return
 	}
 
-	client := bestClient     // Use this client object to send the request
-	clientID := bestClientID // Use this clientID for tracking and logging
+	client := bestClient // Use this client object to send the request
+	clientKey := bestClientKey
 
 	// Add request to client's active requests map
 	s.reqMu.Lock()
-	if s.clientRequests[clientID] == nil {
-		s.clientRequests[clientID] = make(map[string]struct{})
+	if s.clientRequests[clientKey] == nil {
+		s.clientRequests[clientKey] = make(map[string]struct{})
 	}
-	s.clientRequests[clientID][requestID] = struct{}{}
+	s.clientRequests[clientKey][requestID] = struct{}{}
 	s.reqMu.Unlock()
 	client.incrementActive()
 
 	// Wait for response
-	// The clientID variable from the outer scope (bestClientID) is captured by this defer.
 	defer func() {
 		client.decrementActive()
 		s.reqMu.Lock()
 		// Remove request from the client's active request set
-		if reqs, ok := s.clientRequests[clientID]; ok {
+		if reqs, ok := s.clientRequests[clientKey]; ok {
 			delete(reqs, requestID)
 			if len(reqs) == 0 {
-				delete(s.clientRequests, clientID)
+				delete(s.clientRequests, clientKey)
 			}
 		}
 		// Clean up pendingRequests
@@ -649,74 +671,80 @@ func (s *Server) handleAPIRequest(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) unregisterClient(clientID string) {
+func (s *Server) unregisterClient(clientKey string) {
 	s.mu.Lock()
-	client, exists := s.clients[clientID]
+	client, exists := s.clients[clientKey]
 	if !exists {
 		s.mu.Unlock()
 		return
 	}
 
 	// Clean up model to client mapping
+	groupModels := s.modelClients[client.groupName]
 	for _, model := range client.models {
 		if model == nil {
 			continue
 		}
 		modelID := model.GetId()
-		if clients, ok := s.modelClients[modelID]; ok {
+		if clients, ok := groupModels[modelID]; ok {
 			newClients := make([]string, 0, len(clients))
-			for _, cid := range clients {
-				if cid != clientID {
-					newClients = append(newClients, cid)
+			for _, existingClientKey := range clients {
+				if existingClientKey != clientKey {
+					newClients = append(newClients, existingClientKey)
 				}
 			}
 
 			if len(newClients) > 0 {
-				s.modelClients[modelID] = newClients
+				groupModels[modelID] = newClients
 			} else {
-				delete(s.modelClients, modelID)
+				delete(groupModels, modelID)
 			}
 		}
 	}
 
-	delete(s.clients, clientID)
+	delete(s.clients, clientKey)
 	currentClientCount := len(s.clients)
-	s.modelsCacheDirty = true
+	s.modelsCacheDirty[client.groupName] = true
 	s.mu.Unlock()
 
 	// Clean up clientRequests associated with this client
 	s.reqMu.Lock()
-	delete(s.clientRequests, clientID)
+	delete(s.clientRequests, clientKey)
 	s.reqMu.Unlock()
 
-	log.Printf("Client %s unregistered, remaining clients: %d", clientID, currentClientCount)
+	log.Printf("Client %s (group=%s) unregistered, remaining clients: %d", client.id, client.groupName, currentClientCount)
 }
 
-func (s *Server) handleModelUpdate(update *types.ModelUpdateRequest) {
+func (s *Server) handleModelUpdate(clientKey string, update *types.ModelUpdateRequest) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	client := s.clients[update.GetClientId()]
+	client := s.clients[clientKey]
 	if client == nil {
 		log.Printf("Received model update for unknown client %s", update.GetClientId())
 		return
+	}
+	groupModels := s.modelClients[client.groupName]
+	if groupModels == nil {
+		groupModels = make(map[string][]string)
+		s.modelClients[client.groupName] = groupModels
 	}
 	for _, model := range client.models {
 		if model == nil {
 			continue
 		}
 		modelID := model.GetId()
-		if clients, ok := s.modelClients[modelID]; ok {
+		if clients, ok := groupModels[modelID]; ok {
 			newClients := make([]string, 0, len(clients))
-			for _, cid := range clients {
-				if cid != update.GetClientId() {
-					newClients = append(newClients, cid)
+			for _, existingClientKey := range clients {
+				if existingClientKey != clientKey {
+					newClients = append(newClients, existingClientKey)
 				}
 			}
 			if len(newClients) > 0 {
-				s.modelClients[modelID] = newClients
+				groupModels[modelID] = newClients
 			} else {
-				delete(s.modelClients, modelID)
+				delete(groupModels, modelID)
 			}
 		}
 	}
@@ -727,19 +755,19 @@ func (s *Server) handleModelUpdate(update *types.ModelUpdateRequest) {
 			continue
 		}
 		modelID := model.GetId()
-		s.modelClients[modelID] = append(s.modelClients[modelID], update.GetClientId())
+		groupModels[modelID] = append(groupModels[modelID], clientKey)
 	}
 
-	log.Printf("Updated model list for client %s, current number of models: %d", update.GetClientId(), len(client.models))
-	s.modelsCacheDirty = true
+	log.Printf("Updated model list for client %s (group=%s), current number of models: %d", client.id, client.groupName, len(client.models))
+	s.modelsCacheDirty[client.groupName] = true
 }
 
-func (s *Server) handleForceShutdown(req *types.ForceShutdownRequest) {
+func (s *Server) handleForceShutdown(clientKey string, req *types.ForceShutdownRequest) {
 	s.reqMu.Lock()
 	defer s.reqMu.Unlock()
 
 	var requestsToCancel []string
-	if clientActiveRequests, clientExists := s.clientRequests[req.GetClientId()]; clientExists {
+	if clientActiveRequests, clientExists := s.clientRequests[clientKey]; clientExists {
 		for requestID := range clientActiveRequests {
 			requestsToCancel = append(requestsToCancel, requestID)
 		}
@@ -763,11 +791,10 @@ func (s *Server) handleForceShutdown(req *types.ForceShutdownRequest) {
 			close(ch)
 			delete(s.pendingRequests, requestID)
 		}
-		// Remove from clientRequests for this specific client (req.ClientId) and this requestID
-		if reqsForClient, ok := s.clientRequests[req.GetClientId()]; ok {
+		if reqsForClient, ok := s.clientRequests[clientKey]; ok {
 			delete(reqsForClient, requestID)
 			if len(reqsForClient) == 0 {
-				delete(s.clientRequests, req.GetClientId())
+				delete(s.clientRequests, clientKey)
 			}
 		}
 	}
@@ -808,10 +835,10 @@ func (s *Server) putServerMessage(msg *types.ServerMessage) {
 	s.serverMsgPool.Put(msg)
 }
 
-func (s *Server) getModelsCache() []byte {
+func (s *Server) getModelsCache(groupName string) []byte {
 	s.mu.RLock()
-	if !s.modelsCacheDirty && s.modelsCache != nil {
-		cacheCopy := append([]byte(nil), s.modelsCache...)
+	if !s.modelsCacheDirty[groupName] && s.modelsCache[groupName] != nil {
+		cacheCopy := append([]byte(nil), s.modelsCache[groupName]...)
 		s.mu.RUnlock()
 		return cacheCopy
 	}
@@ -819,23 +846,26 @@ func (s *Server) getModelsCache() []byte {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.modelsCacheDirty && s.modelsCache != nil {
-		return append([]byte(nil), s.modelsCache...)
+	if !s.modelsCacheDirty[groupName] && s.modelsCache[groupName] != nil {
+		return append([]byte(nil), s.modelsCache[groupName]...)
 	}
-	cache := s.buildModelsCacheLocked()
-	s.modelsCache = cache
-	s.modelsCacheDirty = false
+	cache := s.buildModelsCacheLocked(groupName)
+	s.modelsCache[groupName] = cache
+	s.modelsCacheDirty[groupName] = false
 	return append([]byte(nil), cache...)
 }
 
-func (s *Server) buildModelsCacheLocked() []byte {
+func (s *Server) buildModelsCacheLocked(groupName string) []byte {
 	type modelGroup struct {
 		models    []*types.ModelInfo
 		clientIDs map[string]struct{}
 	}
 
 	modelGroups := make(map[string]*modelGroup)
-	for clientID, client := range s.clients {
+	for clientKey, client := range s.clients {
+		if client.groupName != groupName {
+			continue
+		}
 		for _, model := range client.models {
 			if model == nil {
 				continue
@@ -851,7 +881,7 @@ func (s *Server) buildModelsCacheLocked() []byte {
 			}
 
 			group.models = append(group.models, model)
-			group.clientIDs[clientID] = struct{}{}
+			group.clientIDs[clientKey] = struct{}{}
 		}
 	}
 

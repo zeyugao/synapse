@@ -27,6 +27,7 @@ func main() {
 	port := flag.String("port", "8080", "Server port")
 	apiAuthKey := flag.String("api-auth-key", "", "API authentication key")
 	wsAuthKey := flag.String("ws-auth-key", "", "WebSocket registration authentication key")
+	configPath := flag.String("config", "", "Path to grouped authentication config file")
 	printVersion := flag.Bool("version", false, "Print version number")
 	clientBinary := flag.String("client-binary", defaultClientPath, "Client binary file path")
 	flag.Parse()
@@ -41,9 +42,26 @@ func main() {
 	}
 
 	log.Printf("Synapse Server Version: %s", version)
-	server := server.NewServer(*apiAuthKey, *wsAuthKey, version, *clientBinary)
+	if *configPath != "" && (*apiAuthKey != "" || *wsAuthKey != "") {
+		log.Fatal("--config cannot be combined with --api-auth-key or --ws-auth-key")
+	}
+
+	var srv *server.Server
+	if *configPath != "" {
+		cfg, err := server.LoadConfig(*configPath)
+		if err != nil {
+			log.Fatalf("Failed to load config: %v", err)
+		}
+		srv, err = server.NewServerWithConfig(cfg, version, *clientBinary)
+		if err != nil {
+			log.Fatalf("Failed to initialize server with config: %v", err)
+		}
+	} else {
+		srv = server.NewServer(*apiAuthKey, *wsAuthKey, version, *clientBinary)
+	}
+
 	log.Printf("Starting server on %s:%s", *host, *port)
-	if err := server.Start(*host, *port); err != nil {
+	if err := srv.Start(*host, *port); err != nil {
 		log.Fatal(err)
 	}
 }

@@ -1,0 +1,241 @@
+package server
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"sort"
+	"strings"
+)
+
+const defaultGroupName = "default"
+
+type Config struct {
+	Groups []ConfigGroup `json:"groups"`
+}
+
+type ConfigGroup struct {
+	Name            string   `json:"name"`
+	WSAuthKeys      []string `json:"ws_auth_keys"`
+	APIBearerTokens []string `json:"api_bearer_tokens"`
+	XAPIKeys        []string `json:"x_api_keys"`
+}
+
+type authConfig struct {
+	groups                  map[string]struct{}
+	groupNames              []string
+	wsAuthToGroup           map[string]string
+	bearerTokenToGroup      map[string]string
+	xAPIKeyToGroup          map[string]string
+	defaultGroup            string
+	allowUnauthenticatedWS  bool
+	allowUnauthenticatedAPI bool
+}
+
+func LoadConfig(path string) (*Config, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("open config %q: %w", path, err)
+	}
+	defer file.Close()
+
+	var cfg Config
+	decoder := json.NewDecoder(file)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&cfg); err != nil {
+		return nil, fmt.Errorf("decode config %q: %w", path, err)
+	}
+	if err := ensureJSONEOF(decoder); err != nil {
+		return nil, fmt.Errorf("decode config %q: %w", path, err)
+	}
+	if _, err := newAuthConfigFromConfig(&cfg); err != nil {
+		return nil, err
+	}
+	return &cfg, nil
+}
+
+func ensureJSONEOF(decoder *json.Decoder) error {
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("unexpected trailing JSON content")
+		}
+		return err
+	}
+	return nil
+}
+
+func newLegacyAuthConfig(apiAuthKey, wsAuthKey string) *authConfig {
+	auth := &authConfig{
+		groups:             map[string]struct{}{defaultGroupName: {}},
+		groupNames:         []string{defaultGroupName},
+		wsAuthToGroup:      make(map[string]string),
+		bearerTokenToGroup: make(map[string]string),
+		xAPIKeyToGroup:     make(map[string]string),
+		defaultGroup:       defaultGroupName,
+	}
+
+	apiAuthKey = strings.TrimSpace(apiAuthKey)
+	wsAuthKey = strings.TrimSpace(wsAuthKey)
+
+	if wsAuthKey == "" {
+		auth.allowUnauthenticatedWS = true
+	} else {
+		auth.wsAuthToGroup[wsAuthKey] = defaultGroupName
+	}
+
+	if apiAuthKey == "" {
+		auth.allowUnauthenticatedAPI = true
+	} else {
+		auth.bearerTokenToGroup[apiAuthKey] = defaultGroupName
+		auth.xAPIKeyToGroup[apiAuthKey] = defaultGroupName
+	}
+
+	return auth
+}
+
+func newAuthConfigFromConfig(cfg *Config) (*authConfig, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("config is required")
+	}
+	if len(cfg.Groups) == 0 {
+		return nil, fmt.Errorf("config must define at least one group")
+	}
+
+	auth := &authConfig{
+		groups:             make(map[string]struct{}, len(cfg.Groups)),
+		wsAuthToGroup:      make(map[string]string),
+		bearerTokenToGroup: make(map[string]string),
+		xAPIKeyToGroup:     make(map[string]string),
+	}
+
+	for _, rawGroup := range cfg.Groups {
+		groupName := strings.TrimSpace(rawGroup.Name)
+		if groupName == "" {
+			return nil, fmt.Errorf("group name cannot be empty")
+		}
+		if _, exists := auth.groups[groupName]; exists {
+			return nil, fmt.Errorf("duplicate group name %q", groupName)
+		}
+
+		wsKeys := normalizeUniqueStrings(rawGroup.WSAuthKeys)
+		bearerTokens := normalizeUniqueStrings(rawGroup.APIBearerTokens)
+		xAPIKeys := normalizeUniqueStrings(rawGroup.XAPIKeys)
+
+		if len(wsKeys) == 0 {
+			return nil, fmt.Errorf("group %q must define at least one ws_auth_keys entry", groupName)
+		}
+		if len(bearerTokens) == 0 && len(xAPIKeys) == 0 {
+			return nil, fmt.Errorf("group %q must define at least one API credential", groupName)
+		}
+
+		auth.groups[groupName] = struct{}{}
+		auth.groupNames = append(auth.groupNames, groupName)
+
+		if err := registerCredentialSet(auth.wsAuthToGroup, wsKeys, groupName, "ws_auth_key"); err != nil {
+			return nil, err
+		}
+		if err := registerCredentialSet(auth.bearerTokenToGroup, bearerTokens, groupName, "api_bearer_token"); err != nil {
+			return nil, err
+		}
+		if err := registerCredentialSet(auth.xAPIKeyToGroup, xAPIKeys, groupName, "x_api_key"); err != nil {
+			return nil, err
+		}
+	}
+
+	sort.Strings(auth.groupNames)
+	return auth, nil
+}
+
+func normalizeUniqueStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func registerCredentialSet(index map[string]string, values []string, groupName, credentialType string) error {
+	for _, value := range values {
+		if existingGroup, exists := index[value]; exists {
+			return fmt.Errorf("%s %q is configured in both group %q and %q", credentialType, value, existingGroup, groupName)
+		}
+		index[value] = groupName
+	}
+	return nil
+}
+
+func (c *authConfig) matchWebSocketGroup(authKey string) (string, bool) {
+	authKey = strings.TrimSpace(authKey)
+	if groupName, exists := c.wsAuthToGroup[authKey]; exists {
+		return groupName, true
+	}
+	if c.allowUnauthenticatedWS {
+		return c.defaultGroup, true
+	}
+	return "", false
+}
+
+func (c *authConfig) matchAPIGroup(headers map[string][]string) (string, error) {
+	matchedGroups := make(map[string]struct{}, 2)
+
+	if token, ok := bearerTokenFromHeader(headerValue(headers, "Authorization")); ok {
+		if groupName, exists := c.bearerTokenToGroup[token]; exists {
+			matchedGroups[groupName] = struct{}{}
+		}
+	}
+
+	if xAPIKey := strings.TrimSpace(headerValue(headers, "X-API-Key")); xAPIKey != "" {
+		if groupName, exists := c.xAPIKeyToGroup[xAPIKey]; exists {
+			matchedGroups[groupName] = struct{}{}
+		}
+	}
+
+	switch len(matchedGroups) {
+	case 0:
+		if c.allowUnauthenticatedAPI {
+			return c.defaultGroup, nil
+		}
+		return "", fmt.Errorf("unauthorized")
+	case 1:
+		for groupName := range matchedGroups {
+			return groupName, nil
+		}
+	default:
+		return "", fmt.Errorf("conflicting credentials belong to different groups")
+	}
+
+	return "", fmt.Errorf("unauthorized")
+}
+
+func bearerTokenFromHeader(value string) (string, bool) {
+	parts := strings.Fields(strings.TrimSpace(value))
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || parts[1] == "" {
+		return "", false
+	}
+	return parts[1], true
+}
+
+func headerValue(headers map[string][]string, key string) string {
+	for headerKey, values := range headers {
+		if !strings.EqualFold(headerKey, key) || len(values) == 0 {
+			continue
+		}
+		return values[0]
+	}
+	return ""
+}

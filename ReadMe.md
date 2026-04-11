@@ -84,8 +84,35 @@ Options:
 - `--port`: Port to listen on (default: "8080")
 - `--api-auth-key`: API authentication key for securing the API endpoint
 - `--ws-auth-key`: WebSocket authentication key for client connections
+- `--config`: Path to a JSON config file for grouped authentication and model isolation
 - `--client-binary`: Path to the client binary for one-click installation (default: "./client")
 - `--version`: Print version information
+
+When `--config` is provided, `--api-auth-key` and `--ws-auth-key` cannot be used at the same time.
+
+Example grouped config:
+
+```json
+{
+  "groups": [
+    {
+      "name": "alpha",
+      "ws_auth_keys": ["ws-alpha"],
+      "api_bearer_tokens": ["bearer-alpha"]
+    },
+    {
+      "name": "beta",
+      "ws_auth_keys": ["ws-beta"],
+      "x_api_keys": ["x-beta"]
+    }
+  ]
+}
+```
+
+In grouped mode:
+- WebSocket clients authenticate with `?ws_auth_key=...`
+- API callers authenticate with either `Authorization: Bearer ...` or `X-API-Key: ...`
+- `/v1/models` and request forwarding only see clients and models inside the matched group
 
 
 
@@ -133,6 +160,13 @@ curl http://synapse-server:8080/v1/chat/completions \
     "model": "llama3.1",
     "messages": [{"role": "user", "content": "Hello!"}]
   }'
+```
+
+Anthropic-style header auth is also supported on the Synapse server side:
+
+```bash
+curl http://synapse-server:8080/v1/models \
+  -H "X-API-Key: YOUR_API_KEY"
 ```
 
 ## License

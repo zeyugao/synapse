@@ -92,6 +92,7 @@ func TestBuildModelsCacheLockedMergesModelsAndAddsClientCount(t *testing.T) {
 	srv := &Server{
 		clients: map[string]*Client{
 			"client-b": {
+				groupName: defaultGroupName,
 				models: []*types.ModelInfo{
 					rawModelInfo(t, "model-b", `{
 						"id": "model-b",
@@ -102,6 +103,7 @@ func TestBuildModelsCacheLockedMergesModelsAndAddsClientCount(t *testing.T) {
 				},
 			},
 			"client-a": {
+				groupName: defaultGroupName,
 				models: []*types.ModelInfo{
 					rawModelInfo(t, "model-a", `{
 						"id": "model-a",
@@ -119,7 +121,7 @@ func TestBuildModelsCacheLockedMergesModelsAndAddsClientCount(t *testing.T) {
 		},
 	}
 
-	cache := srv.buildModelsCacheLocked()
+	cache := srv.buildModelsCacheLocked(defaultGroupName)
 
 	var response struct {
 		Object string           `json:"object"`

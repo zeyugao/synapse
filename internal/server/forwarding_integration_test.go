@@ -47,7 +47,7 @@ func TestForwardingIntegrationMatchesOpenAIClient(t *testing.T) {
 	if !waitForCondition(5*time.Second, func() bool {
 		srv.mu.RLock()
 		defer srv.mu.RUnlock()
-		clients := srv.modelClients[backend.modelID]
+		clients := srv.modelClients[defaultGroupName][backend.modelID]
 		return len(clients) > 0
 	}) {
 		t.Fatalf("model %q was never registered with the server", backend.modelID)
@@ -182,6 +182,92 @@ func TestForwardingIntegrationHandlesEmptyStream(t *testing.T) {
 	}
 	if len(body) != 0 {
 		t.Fatalf("expected empty stream body, got %q", string(body))
+	}
+}
+
+func TestForwardingIntegrationIsolatesGroupsAndSupportsXAPIKey(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	const sharedModelID = "shared-model"
+
+	alphaBackend := newFakeOpenAIBackendWithOptions(t, sharedModelID, "upstream-alpha", "alpha", "group-alpha")
+	defer alphaBackend.Close()
+
+	betaBackend := newFakeOpenAIBackendWithOptions(t, sharedModelID, "upstream-beta", "beta", "group-beta")
+	defer betaBackend.Close()
+
+	srv, err := NewServerWithConfig(&Config{
+		Groups: []ConfigGroup{
+			{
+				Name:            "alpha",
+				WSAuthKeys:      []string{"ws-alpha"},
+				APIBearerTokens: []string{"bearer-alpha"},
+			},
+			{
+				Name:       "beta",
+				WSAuthKeys: []string{"ws-beta"},
+				XAPIKeys:   []string{"x-beta"},
+			},
+		},
+	}, "test-version", "")
+	if err != nil {
+		t.Fatalf("failed to initialize grouped server: %v", err)
+	}
+
+	httpBaseURL, wsURL, shutdownServer := startSynapseHTTPServer(t, srv)
+	defer shutdownServer()
+
+	alphaClient := connectSynapseClient(t, alphaBackend, wsURL, "ws-alpha")
+	defer func() {
+		alphaClient.Shutdown()
+		alphaClient.Close()
+	}()
+
+	betaClient := connectSynapseClient(t, betaBackend, wsURL, "ws-beta")
+	defer func() {
+		betaClient.Shutdown()
+		betaClient.Close()
+	}()
+
+	waitForRegisteredModel(t, srv, "alpha", sharedModelID)
+	waitForRegisteredModel(t, srv, "beta", sharedModelID)
+
+	alphaModels := fetchModelsResponse(t, httpBaseURL, map[string]string{
+		"Authorization": "Bearer bearer-alpha",
+	})
+	if alphaModels.Data[0].OwnedBy != "group-alpha" {
+		t.Fatalf("expected alpha models view to stay in group alpha, got %#v", alphaModels.Data)
+	}
+
+	betaModels := fetchModelsResponse(t, httpBaseURL, map[string]string{
+		"X-API-Key": "x-beta",
+	})
+	if betaModels.Data[0].OwnedBy != "group-beta" {
+		t.Fatalf("expected beta models view to stay in group beta, got %#v", betaModels.Data)
+	}
+
+	alphaContent := fetchCompletionContent(t, httpBaseURL, sharedModelID, "prompt-alpha", map[string]string{
+		"Authorization": "Bearer bearer-alpha",
+	})
+	if alphaContent != alphaBackend.ExpectedForPrompt("prompt-alpha") {
+		t.Fatalf("alpha group routed to wrong backend: got %q want %q", alphaContent, alphaBackend.ExpectedForPrompt("prompt-alpha"))
+	}
+
+	betaContent := fetchCompletionContent(t, httpBaseURL, sharedModelID, "prompt-beta", map[string]string{
+		"X-API-Key": "x-beta",
+	})
+	if betaContent != betaBackend.ExpectedForPrompt("prompt-beta") {
+		t.Fatalf("beta group routed to wrong backend: got %q want %q", betaContent, betaBackend.ExpectedForPrompt("prompt-beta"))
+	}
+
+	resp, body := doJSONRequest(t, http.MethodGet, httpBaseURL+"/v1/models", nil, map[string]string{
+		"Authorization": "Bearer bearer-alpha",
+		"X-API-Key":     "x-beta",
+	})
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("expected conflicting credentials to be rejected, got %d body=%q", resp.StatusCode, string(body))
 	}
 }
 
@@ -348,19 +434,27 @@ if __name__ == "__main__":
 `
 
 type fakeOpenAIBackend struct {
-	t       *testing.T
-	server  *httptest.Server
-	apiKey  string
-	modelID string
+	t              *testing.T
+	server         *httptest.Server
+	apiKey         string
+	modelID        string
+	responsePrefix string
+	ownedBy        string
 }
 
 func newFakeOpenAIBackend(t *testing.T) *fakeOpenAIBackend {
+	return newFakeOpenAIBackendWithOptions(t, "test-model", "upstream-test-api-key", "echo", "integration-test")
+}
+
+func newFakeOpenAIBackendWithOptions(t *testing.T, modelID, apiKey, responsePrefix, ownedBy string) *fakeOpenAIBackend {
 	t.Helper()
 
 	backend := &fakeOpenAIBackend{
-		t:       t,
-		apiKey:  "upstream-test-api-key",
-		modelID: "test-model",
+		t:              t,
+		apiKey:         apiKey,
+		modelID:        modelID,
+		responsePrefix: responsePrefix,
+		ownedBy:        ownedBy,
 	}
 
 	mux := http.NewServeMux()
@@ -389,7 +483,7 @@ func (f *fakeOpenAIBackend) BaseURL() string {
 }
 
 func (f *fakeOpenAIBackend) ExpectedForPrompt(prompt string) string {
-	return fmt.Sprintf("echo:%s", prompt)
+	return fmt.Sprintf("%s:%s", f.responsePrefix, prompt)
 }
 
 func (f *fakeOpenAIBackend) handleModels(w http.ResponseWriter, r *http.Request) {
@@ -404,7 +498,7 @@ func (f *fakeOpenAIBackend) handleModels(w http.ResponseWriter, r *http.Request)
 			{
 				"id":       f.modelID,
 				"object":   "model",
-				"owned_by": "integration-test",
+				"owned_by": f.ownedBy,
 				"created":  time.Now().Unix(),
 			},
 		},
@@ -616,6 +710,39 @@ func waitForCondition(timeout time.Duration, fn func() bool) bool {
 	return false
 }
 
+type modelsResponse struct {
+	Data []struct {
+		ID      string `json:"id"`
+		OwnedBy string `json:"owned_by"`
+	} `json:"data"`
+}
+
+func connectSynapseClient(t *testing.T, backend *fakeOpenAIBackend, wsURL, wsAuthKey string) *synapseclient.Client {
+	t.Helper()
+
+	client := synapseclient.NewClient(backend.BaseURL()+"/v1", wsURL, "test-version")
+	client.ApiKey = backend.apiKey
+	client.WSAuthKey = wsAuthKey
+	if err := client.Connect(); err != nil {
+		t.Fatalf("failed to start synapse client for group %q: %v", wsAuthKey, err)
+	}
+	return client
+}
+
+func waitForRegisteredModel(t *testing.T, srv *Server, groupName, modelID string) {
+	t.Helper()
+
+	if waitForCondition(5*time.Second, func() bool {
+		srv.mu.RLock()
+		defer srv.mu.RUnlock()
+		return len(srv.modelClients[groupName][modelID]) > 0
+	}) {
+		return
+	}
+
+	t.Fatalf("model %q was never registered for group %q", modelID, groupName)
+}
+
 func startConnectedSynapseClient(t *testing.T, backend *fakeOpenAIBackend) (httpBaseURL, serverAPIKey string, shutdown func()) {
 	t.Helper()
 
@@ -624,30 +751,95 @@ func startConnectedSynapseClient(t *testing.T, backend *fakeOpenAIBackend) (http
 
 	httpBaseURL, wsURL, shutdownServer := startSynapseHTTPServer(t, srv)
 
-	client := synapseclient.NewClient(backend.BaseURL()+"/v1", wsURL, "test-version")
-	client.ApiKey = backend.apiKey
-	if err := client.Connect(); err != nil {
-		shutdownServer()
-		t.Fatalf("failed to start synapse client: %v", err)
-	}
-
-	if !waitForCondition(5*time.Second, func() bool {
-		srv.mu.RLock()
-		defer srv.mu.RUnlock()
-		clients := srv.modelClients[backend.modelID]
-		return len(clients) > 0
-	}) {
-		client.Shutdown()
-		client.Close()
-		shutdownServer()
-		t.Fatalf("model %q was never registered with the server", backend.modelID)
-	}
+	client := connectSynapseClient(t, backend, wsURL, "")
+	waitForRegisteredModel(t, srv, defaultGroupName, backend.modelID)
 
 	return httpBaseURL, serverAPIKey, func() {
 		client.Shutdown()
 		client.Close()
 		shutdownServer()
 	}
+}
+
+func fetchModelsResponse(t *testing.T, httpBaseURL string, headers map[string]string) modelsResponse {
+	t.Helper()
+
+	resp, body := doJSONRequest(t, http.MethodGet, httpBaseURL+"/v1/models", nil, headers)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("models request failed: status=%d body=%q", resp.StatusCode, string(body))
+	}
+
+	var parsed modelsResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("failed to decode models response %q: %v", string(body), err)
+	}
+	if len(parsed.Data) == 0 {
+		t.Fatalf("expected at least one model, got %q", string(body))
+	}
+	return parsed
+}
+
+func fetchCompletionContent(t *testing.T, httpBaseURL, model, prompt string, headers map[string]string) string {
+	t.Helper()
+
+	payload := map[string]any{
+		"model":    model,
+		"messages": []map[string]string{{"role": "user", "content": prompt}},
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("failed to marshal completion request: %v", err)
+	}
+
+	resp, body := doJSONRequest(t, http.MethodPost, httpBaseURL+"/v1/chat/completions", data, headers)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("completion request failed: status=%d body=%q", resp.StatusCode, string(body))
+	}
+
+	var parsed struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("failed to decode completion response %q: %v", string(body), err)
+	}
+	if len(parsed.Choices) == 0 {
+		t.Fatalf("expected at least one choice, got %q", string(body))
+	}
+	return parsed.Choices[0].Message.Content
+}
+
+func doJSONRequest(t *testing.T, method, url string, body []byte, headers map[string]string) (*http.Response, []byte) {
+	t.Helper()
+
+	req, err := http.NewRequest(method, url, bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+	if len(body) > 0 && req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("failed to read response body: %v", err)
+	}
+
+	resp.Body = io.NopCloser(bytes.NewReader(respBody))
+	return resp, respBody
 }
 
 func readStreamingBody(t *testing.T, httpBaseURL, apiKey, model, prompt string) (*http.Response, []byte) {
