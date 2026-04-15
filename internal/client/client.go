@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -681,10 +682,9 @@ func (c *Client) forwardRequest(req *types.ForwardRequest) {
 }
 
 func (c *Client) handleStreamResponse(resp *http.Response, requestID string, ctx context.Context) {
-	reader := resp.Body
+	reader := bufio.NewReaderSize(resp.Body, streamReadBufferSize)
 	firstChunk := true
 	header := types.HTTPHeaderToProto(resp.Header.Clone())
-	buf := make([]byte, streamReadBufferSize)
 
 	sendChunk := func(body []byte, done bool) error {
 		forwardResp := &types.ForwardResponse{
@@ -709,9 +709,9 @@ func (c *Client) handleStreamResponse(resp *http.Response, requestID string, ctx
 		default:
 		}
 
-		n, err := reader.Read(buf)
-		if n > 0 {
-			chunkData := append([]byte(nil), buf[:n]...)
+		line, err := reader.ReadBytes('\n')
+		if len(line) > 0 {
+			chunkData := append([]byte(nil), line...)
 			done := errors.Is(err, io.EOF)
 			if err := sendChunk(chunkData, done); err != nil {
 				log.Printf("Failed to send stream data chunk: %v", err)
@@ -727,10 +727,8 @@ func (c *Client) handleStreamResponse(resp *http.Response, requestID string, ctx
 		}
 
 		if errors.Is(err, io.EOF) {
-			if firstChunk {
-				if err := sendChunk(nil, true); err != nil {
-					log.Printf("Failed to send empty stream end marker: %v", err)
-				}
+			if err := sendChunk(nil, true); err != nil {
+				log.Printf("Failed to send stream end marker: %v", err)
 			}
 			return
 		}

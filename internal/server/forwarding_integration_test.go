@@ -185,6 +185,57 @@ func TestForwardingIntegrationHandlesEmptyStream(t *testing.T) {
 	}
 }
 
+func TestForwardingIntegrationClosesStreamWhenEOFArrivesAfterFinalChunk(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	backend := newFakeOpenAIBackend(t)
+	defer backend.Close()
+
+	httpBaseURL, serverAPIKey, shutdown := startConnectedSynapseClient(t, backend)
+	defer shutdown()
+
+	payload := map[string]any{
+		"model":    backend.modelID,
+		"messages": []map[string]string{{"role": "user", "content": delayedEOFPrompt}},
+		"stream":   true,
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("failed to marshal request: %v", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, httpBaseURL+"/v1/chat/completions", bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+serverAPIKey)
+	req.Header.Set("Accept", "text/event-stream")
+
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("stream request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("failed to read delayed-EOF streaming body: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status code: got %d want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	expected := backend.specialStreamBody(delayedEOFPrompt)
+	if !bytes.Equal(body, expected) {
+		t.Fatalf("delayed EOF stream mismatch:\n got: %q\nwant: %q", string(body), string(expected))
+	}
+}
+
 func TestForwardingIntegrationIsolatesGroupsAndSupportsXAPIKey(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -552,6 +603,10 @@ func (f *fakeOpenAIBackend) handleChatCompletion(w http.ResponseWriter, r *http.
 	responseText := f.ExpectedForPrompt(prompt)
 
 	if req.Stream {
+		if prompt == delayedEOFPrompt {
+			f.streamRawResponseWithDelayedClose(w, f.specialStreamBody(prompt), 150*time.Millisecond)
+			return
+		}
 		if rawBody, ok := f.specialStreamBodyForPrompt(prompt); ok {
 			f.streamRawResponse(w, rawBody)
 			return
@@ -647,6 +702,23 @@ func (f *fakeOpenAIBackend) streamRawResponse(w http.ResponseWriter, body []byte
 	flusher.Flush()
 }
 
+func (f *fakeOpenAIBackend) streamRawResponseWithDelayedClose(w http.ResponseWriter, body []byte, delay time.Duration) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		f.t.Fatal("response writer does not support flushing")
+	}
+
+	if len(body) > 0 {
+		if _, err := w.Write(body); err != nil {
+			f.t.Fatalf("failed to write delayed raw stream body: %v", err)
+		}
+	}
+	flusher.Flush()
+	time.Sleep(delay)
+}
+
 func (f *fakeOpenAIBackend) specialStreamBody(prompt string) []byte {
 	f.t.Helper()
 
@@ -665,6 +737,8 @@ func (f *fakeOpenAIBackend) specialStreamBodyForPrompt(prompt string) ([]byte, b
 		return []byte("data: " + strings.Repeat("x", 70*1024) + "\n\n"), true
 	case emptyStreamPrompt:
 		return nil, true
+	case delayedEOFPrompt:
+		return []byte("data: {\"id\":\"delayed-eof\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"), true
 	default:
 		return nil, false
 	}
@@ -883,4 +957,5 @@ const (
 	rawSSEPrompt      = "raw-sse"
 	largeStreamPrompt = "large-stream"
 	emptyStreamPrompt = "empty-stream"
+	delayedEOFPrompt  = "delayed-eof"
 )
