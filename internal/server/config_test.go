@@ -180,10 +180,30 @@ func TestAuthConfigMatchAPIGroupDetectsConflicts(t *testing.T) {
 	}
 
 	groupName, err = auth.matchAPIGroup(map[string][]string{
+		"authorization": {"Bearer bearer-alpha"},
+	})
+	if err != nil {
+		t.Fatalf("expected lowercase authorization header to match, got error: %v", err)
+	}
+	if groupName != "alpha" {
+		t.Fatalf("expected alpha, got %q", groupName)
+	}
+
+	groupName, err = auth.matchAPIGroup(map[string][]string{
 		"X-API-Key": {"x-beta"},
 	})
 	if err != nil {
 		t.Fatalf("expected x-api-key auth to match, got error: %v", err)
+	}
+	if groupName != "beta" {
+		t.Fatalf("expected beta, got %q", groupName)
+	}
+
+	groupName, err = auth.matchAPIGroup(map[string][]string{
+		"x-api-key": {"x-beta"},
+	})
+	if err != nil {
+		t.Fatalf("expected lowercase x-api-key header to match, got error: %v", err)
 	}
 	if groupName != "beta" {
 		t.Fatalf("expected beta, got %q", groupName)
@@ -195,6 +215,14 @@ func TestAuthConfigMatchAPIGroupDetectsConflicts(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "conflicting") {
 		t.Fatalf("expected conflicting credentials error, got %v", err)
+	}
+
+	_, err = auth.matchAPIGroup(map[string][]string{
+		"Authorization": {"Bearer bearer-alpha"},
+		"x-api-key":     {"x-beta"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "conflicting") {
+		t.Fatalf("expected conflicting credentials error for mixed-case headers, got %v", err)
 	}
 }
 

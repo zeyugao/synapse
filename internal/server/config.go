@@ -193,15 +193,19 @@ func (c *authConfig) matchWebSocketGroup(authKey string) (string, bool) {
 func (c *authConfig) matchAPIGroup(headers map[string][]string) (string, error) {
 	matchedGroups := make(map[string]struct{}, 2)
 
-	if token, ok := bearerTokenFromHeader(headerValue(headers, "Authorization")); ok {
-		if groupName, exists := c.bearerTokenToGroup[token]; exists {
-			matchedGroups[groupName] = struct{}{}
+	for _, value := range headerValues(headers, "Authorization") {
+		if token, ok := bearerTokenFromHeader(value); ok {
+			if groupName, exists := c.bearerTokenToGroup[token]; exists {
+				matchedGroups[groupName] = struct{}{}
+			}
 		}
 	}
 
-	if xAPIKey := strings.TrimSpace(headerValue(headers, "X-API-Key")); xAPIKey != "" {
-		if groupName, exists := c.xAPIKeyToGroup[xAPIKey]; exists {
-			matchedGroups[groupName] = struct{}{}
+	for _, value := range headerValues(headers, "X-API-Key") {
+		if xAPIKey := strings.TrimSpace(value); xAPIKey != "" {
+			if groupName, exists := c.xAPIKeyToGroup[xAPIKey]; exists {
+				matchedGroups[groupName] = struct{}{}
+			}
 		}
 	}
 
@@ -230,12 +234,13 @@ func bearerTokenFromHeader(value string) (string, bool) {
 	return parts[1], true
 }
 
-func headerValue(headers map[string][]string, key string) string {
+func headerValues(headers map[string][]string, key string) []string {
+	var matchedValues []string
 	for headerKey, values := range headers {
 		if !strings.EqualFold(headerKey, key) || len(values) == 0 {
 			continue
 		}
-		return values[0]
+		matchedValues = append(matchedValues, values...)
 	}
-	return ""
+	return matchedValues
 }
