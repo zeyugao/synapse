@@ -32,7 +32,7 @@ type Server struct {
 	upgrader         websocket.Upgrader
 	pendingRequests  map[string]chan *types.ForwardResponse
 	reqMu            sync.RWMutex
-	authConfig       *authConfig
+	authConfig       atomic.Value
 	clientRequests   map[string]map[string]struct{} // clientKey -> set of requestIDs
 	version          string
 	clientBinaryPath string
@@ -136,7 +136,6 @@ func newServer(authConfig *authConfig, version string, clientBinaryPath string) 
 		modelClients:    make(map[string]map[string][]string),
 		pendingRequests: make(map[string]chan *types.ForwardResponse),
 		clientRequests:  make(map[string]map[string]struct{}),
-		authConfig:      authConfig,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				return true
@@ -147,6 +146,7 @@ func newServer(authConfig *authConfig, version string, clientBinaryPath string) 
 		modelsCache:      make(map[string][]byte),
 		modelsCacheDirty: make(map[string]bool),
 	}
+	server.authConfig.Store(authConfig)
 
 	for _, groupName := range authConfig.groupNames {
 		server.modelClients[groupName] = make(map[string][]string)
@@ -174,6 +174,30 @@ func newServer(authConfig *authConfig, version string, clientBinaryPath string) 
 	server.pongFrame = frame
 
 	return server
+}
+
+func (s *Server) ReloadConfig(cfg *Config) error {
+	authConfig, err := newAuthConfigFromConfig(cfg)
+	if err != nil {
+		return err
+	}
+
+	s.authConfig.Store(authConfig)
+
+	s.mu.Lock()
+	for _, groupName := range authConfig.groupNames {
+		if s.modelClients[groupName] == nil {
+			s.modelClients[groupName] = make(map[string][]string)
+		}
+		s.modelsCacheDirty[groupName] = true
+	}
+	s.mu.Unlock()
+
+	return nil
+}
+
+func (s *Server) currentAuthConfig() *authConfig {
+	return s.authConfig.Load().(*authConfig)
 }
 
 func makeClientKey(groupName, clientID string) string {
@@ -208,7 +232,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		clientIP = realIP
 	}
 
-	groupName, authorized := s.authConfig.matchWebSocketGroup(r.URL.Query().Get("ws_auth_key"))
+	groupName, authorized := s.currentAuthConfig().matchWebSocketGroup(r.URL.Query().Get("ws_auth_key"))
 	if !authorized {
 		log.Printf("WebSocket authentication failed from %s", clientIP)
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
@@ -443,7 +467,7 @@ func (s *Server) handleModels(w http.ResponseWriter, groupName string) {
 }
 
 func (s *Server) handleAPIRequest(w http.ResponseWriter, r *http.Request) {
-	groupName, err := s.authConfig.matchAPIGroup(r.Header)
+	groupName, err := s.currentAuthConfig().matchAPIGroup(r.Header)
 	if err != nil {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return

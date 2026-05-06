@@ -5,20 +5,23 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 const defaultGroupName = "default"
 
 type Config struct {
-	Groups []ConfigGroup `json:"groups"`
+	Groups []ConfigGroup `json:"groups" yaml:"groups"`
 }
 
 type ConfigGroup struct {
-	Name       string   `json:"name"`
-	WSAuthKeys []string `json:"ws_auth_keys"`
-	APIKeys    []string `json:"api_keys"`
+	Name       string   `json:"name" yaml:"name"`
+	WSAuthKeys []string `json:"ws_auth_keys" yaml:"ws_auth_keys"`
+	APIKeys    []string `json:"api_keys" yaml:"api_keys"`
 }
 
 type authConfig struct {
@@ -39,12 +42,7 @@ func LoadConfig(path string) (*Config, error) {
 	defer file.Close()
 
 	var cfg Config
-	decoder := json.NewDecoder(file)
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&cfg); err != nil {
-		return nil, fmt.Errorf("decode config %q: %w", path, err)
-	}
-	if err := ensureJSONEOF(decoder); err != nil {
+	if err := decodeConfig(path, file, &cfg); err != nil {
 		return nil, fmt.Errorf("decode config %q: %w", path, err)
 	}
 	if _, err := newAuthConfigFromConfig(&cfg); err != nil {
@@ -53,11 +51,41 @@ func LoadConfig(path string) (*Config, error) {
 	return &cfg, nil
 }
 
+func decodeConfig(path string, reader io.Reader, cfg *Config) error {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".json":
+		decoder := json.NewDecoder(reader)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(cfg); err != nil {
+			return err
+		}
+		return ensureJSONEOF(decoder)
+	default:
+		decoder := yaml.NewDecoder(reader)
+		decoder.KnownFields(true)
+		if err := decoder.Decode(cfg); err != nil {
+			return err
+		}
+		return ensureYAMLEOF(decoder)
+	}
+}
+
 func ensureJSONEOF(decoder *json.Decoder) error {
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
 		if err == nil {
 			return fmt.Errorf("unexpected trailing JSON content")
+		}
+		return err
+	}
+	return nil
+}
+
+func ensureYAMLEOF(decoder *yaml.Decoder) error {
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("unexpected trailing YAML content")
 		}
 		return err
 	}

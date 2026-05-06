@@ -84,30 +84,29 @@ Options:
 - `--port`: Port to listen on (default: "8080")
 - `--api-auth-key`: API authentication key for securing the API endpoint
 - `--ws-auth-key`: WebSocket authentication key for client connections
-- `--config`: Path to a JSON config file for grouped authentication and model isolation
+- `--config`: Path to a YAML or JSON config file for grouped authentication and model isolation
 - `--client-binary`: Path to the client binary for one-click installation (default: "./client")
 - `--version`: Print version information
 
 When `--config` is provided, `--api-auth-key` and `--ws-auth-key` cannot be used at the same time.
 
-Example grouped config:
+Example grouped YAML config:
 
-```json
-{
-  "groups": [
-    {
-      "name": "alpha",
-      "ws_auth_keys": ["ws-alpha"],
-      "api_keys": ["api-alpha"]
-    },
-    {
-      "name": "beta",
-      "ws_auth_keys": ["ws-beta"],
-      "api_keys": ["api-beta"]
-    }
-  ]
-}
+```yaml
+groups:
+  - name: alpha
+    ws_auth_keys:
+      - ws-alpha
+    api_keys:
+      - api-alpha
+  - name: beta
+    ws_auth_keys:
+      - ws-beta
+    api_keys:
+      - api-beta
 ```
+
+The same config can also be provided as JSON by using a `.json` file.
 
 In grouped mode:
 - WebSocket clients authenticate with `?ws_auth_key=...`
