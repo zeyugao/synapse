@@ -16,18 +16,16 @@ type Config struct {
 }
 
 type ConfigGroup struct {
-	Name            string   `json:"name"`
-	WSAuthKeys      []string `json:"ws_auth_keys"`
-	APIBearerTokens []string `json:"api_bearer_tokens"`
-	XAPIKeys        []string `json:"x_api_keys"`
+	Name       string   `json:"name"`
+	WSAuthKeys []string `json:"ws_auth_keys"`
+	APIKeys    []string `json:"api_keys"`
 }
 
 type authConfig struct {
 	groups                  map[string]struct{}
 	groupNames              []string
 	wsAuthToGroup           map[string]string
-	bearerTokenToGroup      map[string]string
-	xAPIKeyToGroup          map[string]string
+	apiKeyToGroup           map[string]string
 	defaultGroup            string
 	allowUnauthenticatedWS  bool
 	allowUnauthenticatedAPI bool
@@ -68,12 +66,11 @@ func ensureJSONEOF(decoder *json.Decoder) error {
 
 func newLegacyAuthConfig(apiAuthKey, wsAuthKey string) *authConfig {
 	auth := &authConfig{
-		groups:             map[string]struct{}{defaultGroupName: {}},
-		groupNames:         []string{defaultGroupName},
-		wsAuthToGroup:      make(map[string]string),
-		bearerTokenToGroup: make(map[string]string),
-		xAPIKeyToGroup:     make(map[string]string),
-		defaultGroup:       defaultGroupName,
+		groups:        map[string]struct{}{defaultGroupName: {}},
+		groupNames:    []string{defaultGroupName},
+		wsAuthToGroup: make(map[string]string),
+		apiKeyToGroup: make(map[string]string),
+		defaultGroup:  defaultGroupName,
 	}
 
 	apiAuthKey = strings.TrimSpace(apiAuthKey)
@@ -88,8 +85,7 @@ func newLegacyAuthConfig(apiAuthKey, wsAuthKey string) *authConfig {
 	if apiAuthKey == "" {
 		auth.allowUnauthenticatedAPI = true
 	} else {
-		auth.bearerTokenToGroup[apiAuthKey] = defaultGroupName
-		auth.xAPIKeyToGroup[apiAuthKey] = defaultGroupName
+		auth.apiKeyToGroup[apiAuthKey] = defaultGroupName
 	}
 
 	return auth
@@ -104,10 +100,9 @@ func newAuthConfigFromConfig(cfg *Config) (*authConfig, error) {
 	}
 
 	auth := &authConfig{
-		groups:             make(map[string]struct{}, len(cfg.Groups)),
-		wsAuthToGroup:      make(map[string]string),
-		bearerTokenToGroup: make(map[string]string),
-		xAPIKeyToGroup:     make(map[string]string),
+		groups:        make(map[string]struct{}, len(cfg.Groups)),
+		wsAuthToGroup: make(map[string]string),
+		apiKeyToGroup: make(map[string]string),
 	}
 
 	for _, rawGroup := range cfg.Groups {
@@ -120,14 +115,13 @@ func newAuthConfigFromConfig(cfg *Config) (*authConfig, error) {
 		}
 
 		wsKeys := normalizeUniqueStrings(rawGroup.WSAuthKeys)
-		bearerTokens := normalizeUniqueStrings(rawGroup.APIBearerTokens)
-		xAPIKeys := normalizeUniqueStrings(rawGroup.XAPIKeys)
+		apiKeys := normalizeUniqueStrings(rawGroup.APIKeys)
 
 		if len(wsKeys) == 0 {
 			return nil, fmt.Errorf("group %q must define at least one ws_auth_keys entry", groupName)
 		}
-		if len(bearerTokens) == 0 && len(xAPIKeys) == 0 {
-			return nil, fmt.Errorf("group %q must define at least one API credential", groupName)
+		if len(apiKeys) == 0 {
+			return nil, fmt.Errorf("group %q must define at least one api_keys entry", groupName)
 		}
 
 		auth.groups[groupName] = struct{}{}
@@ -136,10 +130,7 @@ func newAuthConfigFromConfig(cfg *Config) (*authConfig, error) {
 		if err := registerCredentialSet(auth.wsAuthToGroup, wsKeys, groupName, "ws_auth_key"); err != nil {
 			return nil, err
 		}
-		if err := registerCredentialSet(auth.bearerTokenToGroup, bearerTokens, groupName, "api_bearer_token"); err != nil {
-			return nil, err
-		}
-		if err := registerCredentialSet(auth.xAPIKeyToGroup, xAPIKeys, groupName, "x_api_key"); err != nil {
+		if err := registerCredentialSet(auth.apiKeyToGroup, apiKeys, groupName, "api_key"); err != nil {
 			return nil, err
 		}
 	}
@@ -195,7 +186,7 @@ func (c *authConfig) matchAPIGroup(headers map[string][]string) (string, error) 
 
 	for _, value := range headerValues(headers, "Authorization") {
 		if token, ok := bearerTokenFromHeader(value); ok {
-			if groupName, exists := c.bearerTokenToGroup[token]; exists {
+			if groupName, exists := c.apiKeyToGroup[token]; exists {
 				matchedGroups[groupName] = struct{}{}
 			}
 		}
@@ -203,7 +194,7 @@ func (c *authConfig) matchAPIGroup(headers map[string][]string) (string, error) 
 
 	for _, value := range headerValues(headers, "X-API-Key") {
 		if xAPIKey := strings.TrimSpace(value); xAPIKey != "" {
-			if groupName, exists := c.xAPIKeyToGroup[xAPIKey]; exists {
+			if groupName, exists := c.apiKeyToGroup[xAPIKey]; exists {
 				matchedGroups[groupName] = struct{}{}
 			}
 		}

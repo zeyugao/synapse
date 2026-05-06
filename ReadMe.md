@@ -98,12 +98,12 @@ Example grouped config:
     {
       "name": "alpha",
       "ws_auth_keys": ["ws-alpha"],
-      "api_bearer_tokens": ["bearer-alpha"]
+      "api_keys": ["api-alpha"]
     },
     {
       "name": "beta",
       "ws_auth_keys": ["ws-beta"],
-      "x_api_keys": ["x-beta"]
+      "api_keys": ["api-beta"]
     }
   ]
 }
@@ -111,7 +111,7 @@ Example grouped config:
 
 In grouped mode:
 - WebSocket clients authenticate with `?ws_auth_key=...`
-- API callers authenticate with either `Authorization: Bearer ...` or `X-API-Key: ...`
+- API callers authenticate with an `api_keys` value via either `Authorization: Bearer ...` or `X-API-Key: ...`
 - `/v1/models` and request forwarding only see clients and models inside the matched group
 
 

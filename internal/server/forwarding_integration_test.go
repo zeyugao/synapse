@@ -252,14 +252,14 @@ func TestForwardingIntegrationIsolatesGroupsAndSupportsXAPIKey(t *testing.T) {
 	srv, err := NewServerWithConfig(&Config{
 		Groups: []ConfigGroup{
 			{
-				Name:            "alpha",
-				WSAuthKeys:      []string{"ws-alpha"},
-				APIBearerTokens: []string{"bearer-alpha"},
+				Name:       "alpha",
+				WSAuthKeys: []string{"ws-alpha"},
+				APIKeys:    []string{"api-alpha"},
 			},
 			{
 				Name:       "beta",
 				WSAuthKeys: []string{"ws-beta"},
-				XAPIKeys:   []string{"x-beta"},
+				APIKeys:    []string{"api-beta"},
 			},
 		},
 	}, "test-version", "")
@@ -286,36 +286,36 @@ func TestForwardingIntegrationIsolatesGroupsAndSupportsXAPIKey(t *testing.T) {
 	waitForRegisteredModel(t, srv, "beta", sharedModelID)
 
 	alphaModels := fetchModelsResponse(t, httpBaseURL, map[string]string{
-		"Authorization": "Bearer bearer-alpha",
+		"Authorization": "Bearer api-alpha",
 	})
 	if alphaModels.Data[0].OwnedBy != "group-alpha" {
 		t.Fatalf("expected alpha models view to stay in group alpha, got %#v", alphaModels.Data)
 	}
 
 	betaModels := fetchModelsResponse(t, httpBaseURL, map[string]string{
-		"X-API-Key": "x-beta",
+		"X-API-Key": "api-beta",
 	})
 	if betaModels.Data[0].OwnedBy != "group-beta" {
 		t.Fatalf("expected beta models view to stay in group beta, got %#v", betaModels.Data)
 	}
 
 	alphaContent := fetchCompletionContent(t, httpBaseURL, sharedModelID, "prompt-alpha", map[string]string{
-		"Authorization": "Bearer bearer-alpha",
+		"Authorization": "Bearer api-alpha",
 	})
 	if alphaContent != alphaBackend.ExpectedForPrompt("prompt-alpha") {
 		t.Fatalf("alpha group routed to wrong backend: got %q want %q", alphaContent, alphaBackend.ExpectedForPrompt("prompt-alpha"))
 	}
 
 	betaContent := fetchCompletionContent(t, httpBaseURL, sharedModelID, "prompt-beta", map[string]string{
-		"X-API-Key": "x-beta",
+		"X-API-Key": "api-beta",
 	})
 	if betaContent != betaBackend.ExpectedForPrompt("prompt-beta") {
 		t.Fatalf("beta group routed to wrong backend: got %q want %q", betaContent, betaBackend.ExpectedForPrompt("prompt-beta"))
 	}
 
 	resp, body := doJSONRequest(t, http.MethodGet, httpBaseURL+"/v1/models", nil, map[string]string{
-		"Authorization": "Bearer bearer-alpha",
-		"X-API-Key":     "x-beta",
+		"Authorization": "Bearer api-alpha",
+		"X-API-Key":     "api-beta",
 	})
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("expected conflicting credentials to be rejected, got %d body=%q", resp.StatusCode, string(body))

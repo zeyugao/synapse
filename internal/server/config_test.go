@@ -22,8 +22,7 @@ func TestLoadConfigValidatesGroupsAndUnknownFields(t *testing.T) {
 					{
 						"name": "alpha",
 						"ws_auth_keys": ["ws-alpha"],
-						"api_bearer_tokens": ["bearer-alpha"],
-						"x_api_keys": ["x-alpha"]
+						"api_keys": ["api-alpha"]
 					}
 				]
 			}`,
@@ -35,7 +34,7 @@ func TestLoadConfigValidatesGroupsAndUnknownFields(t *testing.T) {
 					{
 						"name": "alpha",
 						"ws_auth_keys": ["ws-alpha"],
-						"api_bearer_tokens": ["bearer-alpha"],
+						"api_keys": ["api-alpha"],
 						"unknown": true
 					}
 				]
@@ -48,7 +47,7 @@ func TestLoadConfigValidatesGroupsAndUnknownFields(t *testing.T) {
 				"groups": [
 					{
 						"name": "alpha",
-						"api_bearer_tokens": ["bearer-alpha"]
+						"api_keys": ["api-alpha"]
 					}
 				]
 			}`,
@@ -64,39 +63,47 @@ func TestLoadConfigValidatesGroupsAndUnknownFields(t *testing.T) {
 					}
 				]
 			}`,
-			wantErr: "API credential",
+			wantErr: "api_keys",
 		},
 		{
-			name: "duplicate bearer across groups",
+			name: "legacy api bearer token field",
 			content: `{
 				"groups": [
 					{
 						"name": "alpha",
 						"ws_auth_keys": ["ws-alpha"],
-						"api_bearer_tokens": ["shared"]
-					},
-					{
-						"name": "beta",
-						"ws_auth_keys": ["ws-beta"],
-						"api_bearer_tokens": ["shared"]
+						"api_bearer_tokens": ["bearer-alpha"]
 					}
 				]
 			}`,
-			wantErr: "configured in both group",
+			wantErr: "unknown field",
 		},
 		{
-			name: "duplicate x-api-key across groups",
+			name: "legacy x-api-key field",
 			content: `{
 				"groups": [
 					{
 						"name": "alpha",
 						"ws_auth_keys": ["ws-alpha"],
-						"x_api_keys": ["shared"]
+						"x_api_keys": ["x-alpha"]
+					}
+				]
+			}`,
+			wantErr: "unknown field",
+		},
+		{
+			name: "duplicate api key across groups",
+			content: `{
+				"groups": [
+					{
+						"name": "alpha",
+						"ws_auth_keys": ["ws-alpha"],
+						"api_keys": ["shared"]
 					},
 					{
 						"name": "beta",
 						"ws_auth_keys": ["ws-beta"],
-						"x_api_keys": ["shared"]
+						"api_keys": ["shared"]
 					}
 				]
 			}`,
@@ -109,12 +116,12 @@ func TestLoadConfigValidatesGroupsAndUnknownFields(t *testing.T) {
 					{
 						"name": "alpha",
 						"ws_auth_keys": ["shared"],
-						"api_bearer_tokens": ["bearer-alpha"]
+						"api_keys": ["api-alpha"]
 					},
 					{
 						"name": "beta",
 						"ws_auth_keys": ["shared"],
-						"api_bearer_tokens": ["bearer-beta"]
+						"api_keys": ["api-beta"]
 					}
 				]
 			}`,
@@ -154,14 +161,14 @@ func TestAuthConfigMatchAPIGroupDetectsConflicts(t *testing.T) {
 	auth, err := newAuthConfigFromConfig(&Config{
 		Groups: []ConfigGroup{
 			{
-				Name:            "alpha",
-				WSAuthKeys:      []string{"ws-alpha"},
-				APIBearerTokens: []string{"bearer-alpha"},
+				Name:       "alpha",
+				WSAuthKeys: []string{"ws-alpha"},
+				APIKeys:    []string{"api-alpha"},
 			},
 			{
 				Name:       "beta",
 				WSAuthKeys: []string{"ws-beta"},
-				XAPIKeys:   []string{"x-beta"},
+				APIKeys:    []string{"api-beta"},
 			},
 		},
 	})
@@ -170,7 +177,7 @@ func TestAuthConfigMatchAPIGroupDetectsConflicts(t *testing.T) {
 	}
 
 	groupName, err := auth.matchAPIGroup(map[string][]string{
-		"Authorization": {"Bearer bearer-alpha"},
+		"Authorization": {"Bearer api-alpha"},
 	})
 	if err != nil {
 		t.Fatalf("expected bearer auth to match, got error: %v", err)
@@ -180,7 +187,7 @@ func TestAuthConfigMatchAPIGroupDetectsConflicts(t *testing.T) {
 	}
 
 	groupName, err = auth.matchAPIGroup(map[string][]string{
-		"authorization": {"Bearer bearer-alpha"},
+		"authorization": {"Bearer api-alpha"},
 	})
 	if err != nil {
 		t.Fatalf("expected lowercase authorization header to match, got error: %v", err)
@@ -190,7 +197,7 @@ func TestAuthConfigMatchAPIGroupDetectsConflicts(t *testing.T) {
 	}
 
 	groupName, err = auth.matchAPIGroup(map[string][]string{
-		"X-API-Key": {"x-beta"},
+		"X-API-Key": {"api-beta"},
 	})
 	if err != nil {
 		t.Fatalf("expected x-api-key auth to match, got error: %v", err)
@@ -200,7 +207,7 @@ func TestAuthConfigMatchAPIGroupDetectsConflicts(t *testing.T) {
 	}
 
 	groupName, err = auth.matchAPIGroup(map[string][]string{
-		"x-api-key": {"x-beta"},
+		"x-api-key": {"api-beta"},
 	})
 	if err != nil {
 		t.Fatalf("expected lowercase x-api-key header to match, got error: %v", err)
@@ -210,16 +217,16 @@ func TestAuthConfigMatchAPIGroupDetectsConflicts(t *testing.T) {
 	}
 
 	_, err = auth.matchAPIGroup(map[string][]string{
-		"Authorization": {"Bearer bearer-alpha"},
-		"X-API-Key":     {"x-beta"},
+		"Authorization": {"Bearer api-alpha"},
+		"X-API-Key":     {"api-beta"},
 	})
 	if err == nil || !strings.Contains(err.Error(), "conflicting") {
 		t.Fatalf("expected conflicting credentials error, got %v", err)
 	}
 
 	_, err = auth.matchAPIGroup(map[string][]string{
-		"Authorization": {"Bearer bearer-alpha"},
-		"x-api-key":     {"x-beta"},
+		"Authorization": {"Bearer api-alpha"},
+		"x-api-key":     {"api-beta"},
 	})
 	if err == nil || !strings.Contains(err.Error(), "conflicting") {
 		t.Fatalf("expected conflicting credentials error for mixed-case headers, got %v", err)
