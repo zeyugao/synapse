@@ -101,7 +101,7 @@ func TestFetchModelsPreservesRawJSON(t *testing.T) {
 	}
 }
 
-func TestModelsEqualOnlyChecksIDs(t *testing.T) {
+func TestModelsEqualChecksMetadata(t *testing.T) {
 	t.Parallel()
 
 	c := &Client{
@@ -112,10 +112,17 @@ func TestModelsEqualOnlyChecksIDs(t *testing.T) {
 	}
 
 	if !c.modelsEqual([]*types.ModelInfo{
+		{Id: "model-b", RawJson: []byte(`{"id":"model-b","max_model_len":2}`)},
+		{Id: "model-a", RawJson: []byte(`{"id":"model-a","max_model_len":1}`)},
+	}) {
+		t.Fatal("unchanged metadata should compare equal regardless of model order")
+	}
+
+	if c.modelsEqual([]*types.ModelInfo{
 		{Id: "model-b", RawJson: []byte(`{"id":"model-b","max_model_len":999}`)},
 		{Id: "model-a", RawJson: []byte(`{"id":"model-a","max_model_len":123}`)},
 	}) {
-		t.Fatal("expected same ID set to be equal despite metadata differences")
+		t.Fatal("expected changed metadata to be unequal")
 	}
 
 	if c.modelsEqual([]*types.ModelInfo{

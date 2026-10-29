@@ -197,3 +197,27 @@ Personally, I recommend "Synapse" as the name because:
 
 What do you think of these names? Or do you have other ideas?
 ```
+
+### Model metadata synchronization
+
+The client polls upstream `/models` every 30 seconds. Model-ID additions and
+removals are advertised immediately on the next successful poll. Metadata-only
+changes use active volatility detection: a JSON path is compared with the last
+advertised payload only when its value is equal in the previous and current
+observations. A one-off change such as `root` or `max_model_len` therefore waits
+one additional successful poll (normally 30 seconds) before notification.
+
+This avoids catalog churn from fields regenerated on every request, such as
+vLLM's `created` and `permission[].id`. Comparison covers typed fields and raw
+JSON, nested objects, array indices and lengths, and missing versus null values.
+Model-list order and object-key order do not matter. Array order does matter;
+reordering array entries is treated as a metadata change that must settle.
+
+Suppressed paths are logged without their values, once while continuously
+changing; they become eligible again as soon as they settle. Detection resets
+when model IDs change or the client reconnects. No ignore list or TTL is needed.
+The full current metadata is forwarded on every registration/reconnect and on
+each update, including volatile fields. A field that changes on every poll only
+propagates when another stable field changes or on reconnect. An upstream outage
+does not count as an observation; the existing consecutive-failure policy still
+clears unavailable models.
